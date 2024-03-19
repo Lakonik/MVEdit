@@ -15,7 +15,9 @@ Official PyTorch implementation of the paper:
 <sup>1</sup>Stanford University, <sup>2</sup>UCSD, <sup>3</sup>Apparate Labs
 <br>
 
-[[project page](https://lakonik.github.io/mvedit)] [[Web UI](http://34.80.119.68:7860/)] [[paper](https://arxiv.org/abs/2403.12032)]
+[[project page](https://lakonik.github.io/mvedit)] [[Web UI](http://34.80.119.68/)] [[paper](https://arxiv.org/abs/2403.12032)]
+
+https://github.com/Lakonik/MVEdit/assets/53893837/062a0622-47f8-4068-b478-aa4a80e5b715
 
 ## Todos
 
