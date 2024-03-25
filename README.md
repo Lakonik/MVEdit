@@ -34,7 +34,7 @@ The code has been tested in the environment described as follows:
 
 - Linux (tested on Ubuntu 20 & 22)
 - [CUDA Toolkit](https://developer.nvidia.com/cuda-toolkit-archive) 12
-- [PyTorch](https://pytorch.org/get-started/previous-versions/) 2.1
+- [PyTorch](https://pytorch.org/get-started/previous-versions/) 2.1.2
 - FFmpeg, x264 (optional, for exporting videos)
 
 Other dependencies can be installed via `pip install -r requirements.txt`. 
@@ -62,4 +62,4 @@ conda remove ffmpeg  # Remove the old version
 conda install -c conda-forge ffmpeg x264
 ```
 
-Optionally, you can install [xFormers](https://github.com/facebookresearch/xformers) for efficnt attention (for PyTorch 1.x). Also, this codebase should be able to work on Windows systems, but it has not been tested extensively.
+This codebase may work on Windows systems, but it has not been tested extensively.
