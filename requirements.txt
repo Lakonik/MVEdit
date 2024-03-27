@@ -8,8 +8,8 @@ lpips==0.1.4
 PyMCubes==0.1.2
 trimesh==4.1.4
 videoio
-transformers==4.34.0
-diffusers[torch]>=0.17.1, <0.19.0
+transformers
+diffusers[torch]==0.18.2
 triton
 torch_redstone
 torchsde
@@ -27,3 +27,4 @@ apex==0.9.10dev
 einops==0.6.0
 yacs>=0.1.8
 pytorch-lightning
+pymatting
