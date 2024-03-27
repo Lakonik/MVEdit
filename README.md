@@ -27,8 +27,6 @@ https://github.com/Lakonik/MVEdit/assets/53893837/062a0622-47f8-4068-b478-aa4a80
 
 ## Installation
 
-### Prerequisites
-
 The code has been tested in the environment described as follows:
 
 - Ampere or later NVIDIA GPU (for bfloat16 support)
@@ -122,11 +120,11 @@ for img_name in tqdm.tqdm(os.listdir(in_dir)):
         False,  # 'Random initialization' Checkbox component
         7,  # 'CFG scale' Slider component
         True,  # 'Texture super-resolution' Checkbox component
-        'DPMSolverSDEKarras',  # 'Sampling method' Dropdown component
-        24,  # 'Sampling steps' Slider component
-        0.4,  # 'Denoising strength' Slider component
-        False,  # 'Random initialization' Checkbox component
-        7,  # 'CFG scale' Slider component
+        'DPMSolverSDEKarras',  # 'Sampling method' Dropdown component (texture super-resolution)
+        24,  # 'Sampling steps' Slider component (texture super-resolution)
+        0.4,  # 'Denoising strength' Slider component (texture super-resolution)
+        False,  # 'Random initialization' Checkbox component (texture super-resolution)
+        7,  # 'CFG scale' Slider component (texture super-resolution)
         *zero123_result,
         api_name='/img_to_3d_1_2_zero123plus_to_mesh')
 
