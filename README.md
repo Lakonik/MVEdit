@@ -23,7 +23,7 @@ https://github.com/Lakonik/MVEdit/assets/53893837/062a0622-47f8-4068-b478-aa4a80
 
 - [x] Add Zero123++ v1.2 to the Web UI
 - [x] Release the complete codebase, including the Web UI that can be deployed on your own machine
-- [ ] Add non-gradio scripts and instructions
+- [ ] Add non-Gradio scripts and instructions
 
 ## Installation
 
@@ -65,7 +65,7 @@ This codebase may work on Windows systems, but it has not been tested extensivel
 
 ## Usage
 
-We recommend using the gradio Web UI and its API. You need a GPU with at least 24G of VRAM to run the Web UI.
+We recommend using the Gradio Web UI and its APIs. You need a GPU with at least 24G of VRAM to run the Web UI.
 
 Run the following command to start the Web UI:
 
@@ -98,7 +98,7 @@ done
 
 This codebase is built upon the following repositories:
 - Base library modified from [SSDNeRF](https://github.com/Lakonik/SSDNeRF)
-- NeRF renderer modified from [Stable-DreamFusion](https://github.com/ashawkey/stable-dreamfusion)
+- NeRF renderer and DMTet modified from [Stable-DreamFusion](https://github.com/ashawkey/stable-dreamfusion)
 - Mesh I/O modified from [DreamGaussian](https://github.com/dreamgaussian/dreamgaussian)
 - [Zero123++](https://github.com/SUDO-AI-3D/zero123plus) for image-to-3D initialization
 - [IP-Adapter](https://github.com/tencent-ailab/IP-Adapter) for extra conditioning
