@@ -112,7 +112,9 @@ def create_interface_stablessdnerf_to_3d(
         var_dict['run_btn'].click(
             fn=set_seed,
             inputs=var_dict['seed'],
-            outputs=var_dict['last_seed'], api_name=False
+            outputs=var_dict['last_seed'],
+            show_progress=False,
+            api_name=False
         ).success(
             fn=stablessdnerf_fun,
             inputs=[var_dict['last_seed']] + stablessdnerf_inputs,
@@ -130,7 +132,9 @@ def create_interface_stablessdnerf_to_3d(
         var_dict['gen_stablessdnerf']['run_btn'].click(
             fn=set_seed,
             inputs=var_dict['gen_stablessdnerf']['seed'],
-            outputs=var_dict['gen_stablessdnerf']['last_seed'], api_name=False
+            outputs=var_dict['gen_stablessdnerf']['last_seed'],
+            show_progress=False,
+            api_name=False
         ).success(
             fn=stablessdnerf_fun,
             inputs=[var_dict['gen_stablessdnerf']['last_seed']] + stablessdnerf_inputs,
@@ -142,7 +146,9 @@ def create_interface_stablessdnerf_to_3d(
         var_dict['gen_mvedit']['run_btn'].click(
             fn=set_seed,
             inputs=var_dict['gen_mvedit']['seed'],
-            outputs=var_dict['gen_mvedit']['last_seed'], api_name=False
+            outputs=var_dict['gen_mvedit']['last_seed'],
+            show_progress=False,
+            api_name=False
         ).success(
             fn=text_3d_to_3d_fun,
             inputs=[var_dict['gen_mvedit']['last_seed']] + text_3d_to_3d_inputs,

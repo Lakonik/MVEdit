@@ -1,5 +1,4 @@
 import gradio as gr
-from copy import deepcopy
 from functools import partial
 from .gradio_custommodel3d import CustomModel3D
 from .shared_opts import create_base_opts, create_generate_bar, create_superres_opts, create_auxiliary_prompt_opts, \
@@ -119,7 +118,9 @@ def create_interface_img_to_3d(
         ).success(
             fn=set_seed,
             inputs=var_dict['gen_all']['seed'],
-            outputs=var_dict['gen_all']['last_seed'], api_name=False
+            outputs=var_dict['gen_all']['last_seed'],
+            show_progress=False,
+            api_name=False
         ).success(
             fn=zero123plus_api,
             inputs=[var_dict['gen_all']['last_seed'], var_dict['fg_image']],
@@ -139,7 +140,9 @@ def create_interface_img_to_3d(
         ).success(
             fn=set_seed,
             inputs=var_dict['gen_zero123plus']['seed'],
-            outputs=var_dict['gen_zero123plus']['last_seed'], api_name=False
+            outputs=var_dict['gen_zero123plus']['last_seed'],
+            show_progress=False,
+            api_name=False
         ).success(
             fn=zero123plus_api,
             inputs=[var_dict['gen_zero123plus']['last_seed'], var_dict['fg_image']],
@@ -149,7 +152,9 @@ def create_interface_img_to_3d(
         var_dict['gen_mvedit']['run_btn'].click(
             fn=set_seed,
             inputs=var_dict['gen_mvedit']['seed'],
-            outputs=var_dict['gen_mvedit']['last_seed'], api_name=False
+            outputs=var_dict['gen_mvedit']['last_seed'],
+            show_progress=False,
+            api_name=False
         ).success(
             fn=img_to_3d_fun,
             inputs=[var_dict['gen_mvedit']['last_seed']] + img_to_3d_inputs,

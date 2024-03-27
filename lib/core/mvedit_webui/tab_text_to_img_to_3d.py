@@ -71,7 +71,9 @@ def create_interface_text_to_img_to_3d(sd_api, examples=None, advanced=True):
         var_dict['run_btn'].click(
             fn=set_seed,
             inputs=var_dict['seed'],
-            outputs=var_dict['last_seed'], api_name=False
+            outputs=var_dict['last_seed'],
+            show_progress=False,
+            api_name=False
         ).success(
             fn=text_to_img_fun,
             inputs=[var_dict['last_seed']] + img_to_3d_inputs,

@@ -63,7 +63,7 @@ This codebase may work on Windows systems, but it has not been tested extensivel
 
 ## Usage
 
-We recommend using the Gradio Web UI and its APIs. You need a GPU with at least 24G of VRAM to run the Web UI.
+We recommend using the Gradio Web UI and its APIs. You need a GPU with at least 24GB of VRAM to run the Web UI.
 
 ### Web UI
 

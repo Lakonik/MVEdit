@@ -73,15 +73,6 @@ def main():
         with gr.Tabs() as main_tabs:
             with gr.TabItem('Text-to-3D', id='tab_text_to_3d'):
                 with gr.Tabs() as sub_tabs_text_to_3d:
-                    with gr.TabItem('Text-to-Image-to-3D', id='tab_text_to_img_to_3d'):
-                        _, var_text_to_img_to_3d = create_interface_text_to_img_to_3d(
-                            runner.run_text_to_img,
-                            examples=[
-                                [768, 512, 'a wooden carving of a wise old turtle', ''],
-                                [512, 512, 'a glowing robotic unicorn, full body', ''],
-                                [512, 512, 'a ceramic mug shaped like a smiling cat', ''],
-                            ],
-                            advanced=args.advanced)
                     with gr.TabItem('StableSSDNeRF (ShapeNet Cars)', id='tab_stablessdnerf'):
                         _, var_stablessdnerf = create_interface_stablessdnerf_to_3d(
                             runner.run_stablessdnerf,
@@ -100,6 +91,15 @@ def main():
                             ],
                             api_names=['text_to_3d_stablessdnerf', 'text_to_3d_stablessdnerf_to_mesh'],
                             diff_bs=args.diff_bs, advanced=args.advanced)
+                    with gr.TabItem('Text-to-Image-to-3D', id='tab_text_to_img_to_3d'):
+                        _, var_text_to_img_to_3d = create_interface_text_to_img_to_3d(
+                            runner.run_text_to_img,
+                            examples=[
+                                [768, 512, 'a wooden carving of a wise old turtle', ''],
+                                [512, 512, 'a glowing robotic unicorn, full body', ''],
+                                [512, 512, 'a ceramic mug shaped like a smiling cat', ''],
+                            ],
+                            advanced=args.advanced)
             with gr.TabItem('Image-to-3D', id='tab_img_to_3d'):
                 with gr.Tabs() as sub_tabs_img_to_3d:
                     with gr.TabItem(f'Zero123++ v1.1', id='tab_zero123plus1_1'):
@@ -183,6 +183,7 @@ def main():
                     fn=partial(send_to_click, target_tab_ids=['tab_3d_to_3d', 'tab_text_3d_to_3d']),
                     inputs=[var_dict[k] for k in in_fields],
                     outputs=[var_text_3d_to_3d[k] for k in out_fields] + [main_tabs, sub_tabs_3d_to_3d],
+                    show_progress=False,
                     api_name=False
                 ).success(
                     **var_text_3d_to_3d['preproc_kwargs'],
@@ -193,6 +194,7 @@ def main():
                     fn=partial(send_to_click, target_tab_ids=['tab_3d_to_3d', 'tab_instruct_3d_to_3d']),
                     inputs=var_dict['output'],
                     outputs=[var_instruct_3d_to_3d['in_mesh']] + [main_tabs, sub_tabs_3d_to_3d],
+                    show_progress=False,
                     api_name=False
                 ).success(
                     **var_instruct_3d_to_3d['preproc_kwargs'],
@@ -203,6 +205,7 @@ def main():
                     fn=partial(send_to_click, target_tab_ids=['tab_retex', 'tab_text_retex']),
                     inputs=[var_dict[k] for k in in_fields],
                     outputs=[var_text_retex[k] for k in out_fields] + [main_tabs, sub_tabs_retex],
+                    show_progress=False,
                     api_name=False
                 ).success(
                     **var_text_retex['preproc_kwargs'],
@@ -213,6 +216,7 @@ def main():
                     fn=partial(send_to_click, target_tab_ids=['tab_retex', 'tab_instruct_retex']),
                     inputs=var_dict['output'],
                     outputs=[var_instruct_retex['in_mesh']] + [main_tabs, sub_tabs_retex],
+                    show_progress=False,
                     api_name=False
                 ).success(
                     **var_instruct_retex['preproc_kwargs'],
@@ -223,6 +227,7 @@ def main():
                     fn=partial(send_to_click, target_tab_ids=['tab_tools', 'tab_export_video']),
                     inputs=var_dict['output'],
                     outputs=[var_3d_to_video['in_mesh']] + [main_tabs, sub_tabs_tools],
+                    show_progress=False,
                     api_name=False
                 ).success(
                     **var_3d_to_video['preproc_kwargs'],
@@ -235,11 +240,13 @@ def main():
                 inputs=[var_text_to_img_to_3d[k] for k in ['output_image', 'prompt', 'negative_prompt']],
                 outputs=[var_img_to_3d[k] for k in ['in_image', 'prompt', 'negative_prompt']]
                         + [main_tabs, sub_tabs_img_to_3d],
+                show_progress=False,
                 api_name=False
             ).success(
                 fn=lambda: gr.Accordion(open=True),
                 inputs=None,
                 outputs=var_img_to_3d['prompt_accordion'],
+                show_progress=False,
                 api_name=False
             )
 
