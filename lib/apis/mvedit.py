@@ -37,6 +37,19 @@ from lib.pipelines.utils import (
 from lib.models.autoencoders.base_nerf import IdentityCode
 
 
+def _api_wrapper(func):
+    def wrapper(*args, **kwargs):
+        self = args[0]
+        torch.set_grad_enabled(False)
+        torch.backends.cuda.matmul.allow_tf32 = True
+        ret = func(*args, **kwargs)
+        gc.collect()
+        if self.empty_cache:
+            torch.cuda.empty_cache()
+        return ret
+    return wrapper
+
+
 class MVEditRunner:
     def __init__(self, device, local_files_only=False, empty_cache=True, unload_models=True,
                  out_dir=None, save_interval=None, debug=False, no_safe=False):
@@ -581,10 +594,10 @@ class MVEditRunner:
         )
         return out_mesh, ingp_states
 
+    @_api_wrapper
     def run_mesh_preproc(self, in_mesh, *args, cache_dir=None, render_bs=8):
         if self.empty_cache:
             torch.cuda.empty_cache()
-        torch.set_grad_enabled(False)
         if in_mesh is None or os.path.getsize(in_mesh) > 10000000:
             return gr.Gallery(value=self.dummy_mv, selected_index=None), None, None
         if len(args) > 0:
@@ -620,13 +633,10 @@ class MVEditRunner:
             for image_single in image_batch:
                 mv_images.append(Image.fromarray(image_single))
         proc_dict.pop('mesh_obj', None)
-        gc.collect()
-        if self.empty_cache:
-            torch.cuda.empty_cache()
         return gr.Gallery(value=mv_images, selected_index=front_view_id), json.dumps(proc_dict), front_view_id
 
+    @_api_wrapper
     def run_segmentation(self, in_img):
-        torch.set_grad_enabled(False)
         self.load_sam_predictor()
         if self.unload_models:
             self.unload_stablessdnerf()
@@ -639,13 +649,10 @@ class MVEditRunner:
         else:
             in_img = do_segmentation(
                 in_img_np[None, :, :, :3], self.segmentation, sam_predictor=self.predictor, to_np=True)[0]
-        gc.collect()
-        if self.empty_cache:
-            torch.cuda.empty_cache()
         return Image.fromarray(in_img)
 
+    @_api_wrapper
     def run_zero123plus(self, seed, in_img):
-        torch.set_grad_enabled(False)
         self.load_zero123plus_pipeline('sudo-ai/zero123plus-v1.1')
         if self.unload_models:
             self.unload_stablessdnerf()
@@ -657,13 +664,10 @@ class MVEditRunner:
         init_images = self.proc_zero123plus(
             seed, in_img, seg_padding=32, out_margin=160 - self.zero123plus_crop_half_size)
         print('Zero123++ generation finished.')
-        gc.collect()
-        if self.empty_cache:
-            torch.cuda.empty_cache()
         return init_images
 
+    @_api_wrapper
     def run_zero123plus1_2(self, seed, in_img):
-        torch.set_grad_enabled(False)
         self.load_zero123plus_pipeline(
             'sudo-ai/zero123plus-v1.2', normal_controlnet='sudo-ai/controlnet-zp12-normal-gen-v1')
         if self.unload_models:
@@ -675,13 +679,10 @@ class MVEditRunner:
         print(f'\nRunning Zero123++ generation with seed {seed}...')
         init_images = self.proc_zero123plus(seed, in_img, seg_padding=64)
         print('Zero123++ generation finished.')
-        gc.collect()
-        if self.empty_cache:
-            torch.cuda.empty_cache()
         return init_images
 
+    @_api_wrapper
     def run_zero123plus_to_mesh(self, seed, in_img, *args, cache_dir=None, **kwargs):
-        torch.set_grad_enabled(False)
         nerf_mesh_kwargs, superres_kwargs, init_images = parse_3d_args(list(args), kwargs)
 
         self.load_normal_model()
@@ -760,13 +761,10 @@ class MVEditRunner:
         out_path = osp.join(cache_dir, f'output_{uuid.uuid4()}.glb')
         out_mesh.write(out_path, flip_yz=True)
         print('Zero123++ to mesh finished.')
-        gc.collect()
-        if self.empty_cache:
-            torch.cuda.empty_cache()
         return out_path
 
+    @_api_wrapper
     def run_zero123plus1_2_to_mesh(self, seed, in_img, *args, cache_dir=None, **kwargs):
-        torch.set_grad_enabled(False)
         nerf_mesh_kwargs, superres_kwargs, init_images = parse_3d_args(list(args), kwargs)
         init_images, init_normals = init_images[:len(init_images) // 2], init_images[len(init_images) // 2:]
 
@@ -848,16 +846,13 @@ class MVEditRunner:
         out_path = osp.join(cache_dir, f'output_{uuid.uuid4()}.glb')
         out_mesh.write(out_path, flip_yz=True)
         print('Zero123++ to mesh finished.')
-        gc.collect()
-        if self.empty_cache:
-            torch.cuda.empty_cache()
         return out_path
 
+    @_api_wrapper
     def run_3d_to_3d(self, seed, proc_dict, front_view_id, *args, cache_dir=None,
                      instruct=False, **kwargs):
         if isinstance(front_view_id, str):
             front_view_id = None
-        torch.set_grad_enabled(False)
         nerf_mesh_kwargs, superres_kwargs, _ = parse_3d_args(list(args), kwargs)
         proc_dict = json.loads(proc_dict)
         mesh_path = proc_dict['mesh_path']
@@ -935,13 +930,10 @@ class MVEditRunner:
         out_mesh.write(out_path, flip_yz=True)
         mode = 'Instruct' if instruct else 'Text-guided'
         print(f'{mode} 3D-to-3D finished.')
-        gc.collect()
-        if self.empty_cache:
-            torch.cuda.empty_cache()
         return out_path
 
+    @_api_wrapper
     def run_text_to_img(self, seed, *args, **kwargs):
-        torch.set_grad_enabled(False)
         image_kwargs = parse_2d_args(list(args), kwargs)
 
         self.load_stable_diffusion(image_kwargs['checkpoint'])
@@ -968,11 +960,9 @@ class MVEditRunner:
             guidance_scale=image_kwargs['cfg_scale'],
             return_dict=False)[0][0]
         print('Text-to-Image finished.')
-        gc.collect()
-        if self.empty_cache:
-            torch.cuda.empty_cache()
         return out_img
 
+    @_api_wrapper
     def run_retex(self, seed, proc_dict, front_view_id, *args,
                   cache_dir=None, instruct=False, **kwargs):
         if isinstance(front_view_id, str):
@@ -1073,16 +1063,13 @@ class MVEditRunner:
         out_mesh.write(out_path, flip_yz=True)
         mode = 'Instruct' if instruct else 'Text-guided'
         print(f'{mode} re-texturing finished.')
-        gc.collect()
-        if self.empty_cache:
-            torch.cuda.empty_cache()
         return out_path
 
+    @_api_wrapper
     def run_video(self, proc_dict, front_view_id, distance, elevation, fov, length, resolution, lossless,
                   layer='RGB', cache_dir=None, fps=30, render_bs=8):
         if self.empty_cache:
             torch.cuda.empty_cache()
-        torch.set_grad_enabled(False)
         proc_dict = json.loads(proc_dict)
         mesh_path = proc_dict['mesh_path']
         in_mesh = Mesh.load(mesh_path, device=self.device, flip_yz=True)
@@ -1132,13 +1119,10 @@ class MVEditRunner:
                 writer.write(image_single)
         writer.close()
 
-        gc.collect()
-        if self.empty_cache:
-            torch.cuda.empty_cache()
         return out_path
 
+    @_api_wrapper
     def run_stablessdnerf(self, seed, *args, cache_dir=None, **kwargs):
-        torch.set_grad_enabled(False)
         stablessdnerf_kwargs = parse_stablessdnerf_args(list(args), kwargs)
 
         self.load_stablessdnerf()
@@ -1213,14 +1197,11 @@ class MVEditRunner:
 
         torch.save(dict(triplane=triplane, density_grid=density_grid, density_bitfield=density_bitfield),
                    out_triplane_path)
-        gc.collect()
-        if self.empty_cache:
-            torch.cuda.empty_cache()
         return out_video_path, out_triplane_path
 
+    @_api_wrapper
     def run_stablessdnerf_to_mesh(
             self, seed, triplane_path, *args, cache_dir=None, **kwargs):
-        torch.set_grad_enabled(False)
         in_triplane = torch.load(triplane_path, map_location=self.device)
         nerf_mesh_kwargs, superres_kwargs, _ = parse_3d_args(list(args), kwargs)
 
@@ -1300,7 +1281,4 @@ class MVEditRunner:
         out_path = osp.join(cache_dir, f'output_{uuid.uuid4()}.glb')
         out_mesh.write(out_path, flip_yz=True)
         print(f'StableSSDNeRF to mesh finished.')
-        gc.collect()
-        if self.empty_cache:
-            torch.cuda.empty_cache()
         return out_path
