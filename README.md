@@ -23,7 +23,7 @@ https://github.com/Lakonik/MVEdit/assets/53893837/062a0622-47f8-4068-b478-aa4a80
 
 This codebase is currently incomplete and under refactoring. We aim to release the complete codebase in two weeks. The following are the todos:
 
-- [ ] Add Zero123++ v1.2/V3D/SV3D to the Web UI
+- [x] Add Zero123++ v1.2 to the Web UI
 - [ ] Release the complete codebase, including the Web UI that can be deployed on your own machine
 
 ## Installation
