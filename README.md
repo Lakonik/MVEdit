@@ -128,7 +128,7 @@ for img_name in tqdm.tqdm(os.listdir(in_dir)):
         *zero123_result,
         api_name='/img_to_3d_1_2_zero123plus_to_mesh')
 
-    shutil.move(mvedit_result, os.path.join(out_dir, img_name.replace('.png', '.glb')))
+    shutil.move(mvedit_result, os.path.join(out_dir, os.path.splitext(img_name)[0] + '.glb'))
 ```
 
 ### Direct Pipeline Usage
