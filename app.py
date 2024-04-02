@@ -70,7 +70,7 @@ def main():
             md_txt += '<br>**Advanced settings** are disabled. Deploy the app with `--advanced` to enable them.'
         gr.Markdown(md_txt)
 
-        with gr.Tabs() as main_tabs:
+        with gr.Tabs(selected='tab_img_to_3d') as main_tabs:
             with gr.TabItem('Text-to-3D', id='tab_text_to_3d'):
                 with gr.Tabs() as sub_tabs_text_to_3d:
                     with gr.TabItem('StableSSDNeRF (ShapeNet Cars)', id='tab_stablessdnerf'):

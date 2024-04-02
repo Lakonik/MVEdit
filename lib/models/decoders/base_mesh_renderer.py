@@ -4,6 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import nvdiffrast.torch as dr
 
+from lib.core.utils.nerf_utils import get_ray_directions, depth_to_normal
 from lib.ops.edge_dilation import edge_dilation
 
 
@@ -410,6 +411,84 @@ class MeshRenderer(nn.Module):
         new_albedo_map = xyz.new_zeros((map_size, map_size, 3))
         new_albedo_map[valid] = rgb_reshade
         torch.cuda.empty_cache()
+        new_albedo_map = edge_dilation(
+            new_albedo_map.permute(2, 0, 1)[None], valid[None, None].float(),
+        ).squeeze(0).permute(1, 2, 0)
+        mesh.albedo = torch.cat(
+            [new_albedo_map.clamp(min=0, max=1),
+             torch.ones_like(new_albedo_map[..., :1])], dim=-1)
+
+        mesh.textureless = False
+        return [mesh]
+
+    def bake_multiview(self, meshes, images, alphas, poses, intrinsics, map_size=1024, cos_weight_pow=4.0):
+        assert len(meshes) == 1, 'only support one mesh'
+        mesh = meshes[0]
+        images = images[0]  # (n, h, w, 3)
+        alphas = alphas[0]  # (n, h, w, 1)
+        n, h, w, _ = images.size()
+
+        r_mat_c2w = torch.cat(
+            [poses[..., :3, :1], -poses[..., :3, 1:3]], dim=-1)[0]  # opencv to opengl conversion
+
+        proj = poses.new_zeros([n, 4, 4])
+        proj[..., 0, 0] = 2 * intrinsics[..., 0] / w
+        proj[..., 0, 2] = -2 * intrinsics[..., 2] / w + 1
+        proj[..., 1, 1] = -2 * intrinsics[..., 1] / h
+        proj[..., 1, 2] = -2 * intrinsics[..., 3] / h + 1
+        proj[..., 2, 2] = -(self.far + self.near) / (self.far - self.near)
+        proj[..., 2, 3] = -(2 * self.far * self.near) / (self.far - self.near)
+        proj[..., 3, 2] = -1
+
+        # (num_images, num_vertices, 3)
+        v_cam = (mesh.v.detach() - poses[0, :, :3, 3].unsqueeze(-2)) @ r_mat_c2w
+        # (num_images, num_vertices, 4)
+        v_clip = F.pad(v_cam, pad=(0, 1), mode='constant', value=1.0) @ proj.transpose(-1, -2)
+
+        rast, rast_db = dr.rasterize(self.glctx, v_clip, mesh.f, (h, w), grad_db=False)
+        texc, texc_db = dr.interpolate(
+            mesh.vt.unsqueeze(0).contiguous(), rast, mesh.ft, rast_db=rast_db, diff_attrs='all')
+
+        with torch.enable_grad():
+            dummy_maps = torch.ones((n, map_size, map_size, 1), device=images.device, dtype=images.dtype).requires_grad_(True)
+            # (num_images, h, w, 1)
+            albedo = dr.texture(
+                dummy_maps, texc, uv_da=texc_db, filter_mode=self.texture_filter)
+            visibility_grad = torch.autograd.grad(albedo.sum(), dummy_maps, create_graph=False)[0]
+
+        fg = rast[..., 3] > 0  # (num_images, h, w)
+        depth = 1 / dr.interpolate(
+            -v_cam[..., 2:3].contiguous(), rast, mesh.f)[0].reshape(n, h, w)
+        depth.masked_fill_(~fg, 0)
+
+        directions = get_ray_directions(h, w, intrinsics.squeeze(0), norm=True, device=intrinsics.device)
+
+        normals_opencv = depth_to_normal(depth, directions, format='opencv') * 2 - 1
+        normals_cos_weight = (normals_opencv[..., None, :] @ directions[..., :, None]).squeeze(-1).neg().clamp(min=0)
+
+        img_space_weight = (normals_cos_weight ** cos_weight_pow) * alphas
+        img_space_weight = -F.max_pool2d(  # alleviate edge effect
+            -img_space_weight.permute(0, 3, 1, 2), 5, stride=1, padding=2).permute(0, 2, 3, 1)
+
+        # bake texture
+        vt_clip = torch.cat([mesh.vt * 2 - 1, mesh.vt.new_tensor([[0., 1.]]).expand(mesh.vt.size(0), -1)], dim=-1)
+
+        rast, rast_db = dr.rasterize(self.glctx, vt_clip[None], mesh.ft, (map_size, map_size), grad_db=False)
+        valid = (rast[..., 3] > 0).reshape(map_size, map_size)
+        rast = rast.expand(n, -1, -1, -1)
+        rast_db = rast_db.expand(n, -1, -1, -1)
+        v_img = v_clip[..., :2] / v_clip[..., 3:] * 0.5 + 0.5
+
+        texc, texc_db = dr.interpolate(
+            v_img.contiguous(), rast.contiguous(), mesh.f, rast_db=rast_db.contiguous(), diff_attrs='all')
+        # (n, map_size, map_size, 4)
+        tex = dr.texture(
+            torch.cat([images, img_space_weight], dim=-1), texc, uv_da=texc_db, filter_mode=self.texture_filter)
+
+        weight = tex[..., 3:4] * visibility_grad
+
+        new_albedo_map = (tex[..., :3] * weight).sum(dim=0) / weight.sum(dim=0).clamp(min=1e-6)
+
         new_albedo_map = edge_dilation(
             new_albedo_map.permute(2, 0, 1)[None], valid[None, None].float(),
         ).squeeze(0).permute(1, 2, 0)

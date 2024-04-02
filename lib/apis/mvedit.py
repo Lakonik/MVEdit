@@ -466,6 +466,7 @@ class MVEditRunner:
             prog_bar=gr.Progress().tqdm,
             out_dir=self.out_dir_3d,
             save_interval=self.save_interval,
+            save_all_interval=self.save_interval,
             mesh_reduction=128 / nerf_mesh_kwargs['tet_resolution'],
             debug=self.debug,
             **kwargs
@@ -535,6 +536,7 @@ class MVEditRunner:
             prog_bar=gr.Progress().tqdm,
             out_dir=self.out_dir_superres,
             save_interval=self.save_interval,
+            save_all_interval=self.save_interval,
             force_auto_uv=base_kwargs.get('force_auto_uv', False),
             debug=self.debug,
             **kwargs
@@ -589,6 +591,7 @@ class MVEditRunner:
             prog_bar=gr.Progress().tqdm,
             out_dir=self.out_dir_tex,
             save_interval=self.save_interval,
+            save_all_interval=self.save_interval,
             force_auto_uv=retex_kwargs['force_auto_uv'],
             debug=self.debug,
         )
