@@ -536,7 +536,7 @@ class MVEdit3DPipeline(StableDiffusionControlNetPipeline):
     def save_all_viz(self, out_dir, i, num_keep_views, tgt_images=None, latents_scaled=None, ctrl_images=None,
                      ctrl_depths=None, normals=None, alphas=None, diff_bs=12):
         if num_keep_views == 0:
-            num_keep_views = tgt_images.size(0)
+            num_keep_views = tgt_images.size(1)
         if latents_scaled is not None:
             noisy_images = []
             for batch_latents_scaled in latents_scaled[:num_keep_views, :, -64:].split(diff_bs, dim=0):
