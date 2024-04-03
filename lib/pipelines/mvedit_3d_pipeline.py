@@ -972,6 +972,8 @@ class MVEdit3DPipeline(StableDiffusionControlNetPipeline):
                             target_reduction=1 - mesh_reduction)
                         mesh_verts = mesh_verts.new_tensor(mesh_verts_).requires_grad_(False)
                         mesh_faces = mesh_faces.new_tensor(mesh_faces_).requires_grad_(False)
+                        mesh_verts, indices = torch.unique(mesh_verts, dim=0, return_inverse=True, sorted=False)
+                        mesh_faces = indices[mesh_faces]
                         optimizer = torch.optim.Adam(self.nerf.decoder.parameters(), lr=lr)
                         mesh_is_simplified = True
                     mesh_faces = mesh_faces.int()

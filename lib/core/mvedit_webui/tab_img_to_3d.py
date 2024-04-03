@@ -66,7 +66,7 @@ def create_interface_img_to_3d(
                         var_dict, **{key: nerf_mesh_defaults[key] for key in ['aux_prompt', 'aux_negative_prompt']})
                     create_batch_size_opts(
                         var_dict, diff_bs=diff_bs, **{key: nerf_mesh_defaults[key] for key in [
-                            'patch_size', 'patch_bs_nerf', 'render_bs', 'patch_bs']})
+                            'patch_size', 'patch_bs_nerf', 'render_bs', 'patch_bs', 'max_num_views']})
                     create_loss_sliders(
                         var_dict, **{key: nerf_mesh_defaults[key] for key in [
                             'alpha_soften', 'normal_reg_weight', 'start_entropy_weight', 'end_entropy_weight',

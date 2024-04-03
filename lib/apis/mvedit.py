@@ -11,6 +11,7 @@ import diffusers
 import gradio as gr
 import mmcv
 from copy import copy
+from functools import partial
 from videoio import VideoWriter
 from scipy.stats import vonmises
 from PIL import Image, ImageOps
@@ -31,6 +32,8 @@ from lib.core.mvedit_webui.parameters import parse_3d_args, parse_2d_args, parse
 from lib.models.architecture.ip_adapter import IPAdapter
 from lib.models.autoencoders.base_mesh import Mesh, preprocess_mesh
 from lib.pipelines import MVEdit3DPipeline, MVEditTextureSuperResPipeline, MVEditTexturePipeline, Zero123PlusPipeline
+from lib.pipelines.mvedit_3d_pipeline import default_max_num_views
+from lib.pipelines.mvedit_texture_pipeline import default_max_num_views as default_max_num_views_texture
 from lib.pipelines.utils import (
     init_common_modules, rgba_to_rgb, do_segmentation, do_segmentation_pil, pad_rgba_image, join_prompts,
     zero123plus_postprocess)
@@ -468,6 +471,10 @@ class MVEditRunner:
             save_interval=self.save_interval,
             save_all_interval=self.save_interval,
             mesh_reduction=128 / nerf_mesh_kwargs['tet_resolution'],
+            max_num_views=partial(
+                default_max_num_views,
+                start_num=nerf_mesh_kwargs['max_num_views'],
+                mid_num=nerf_mesh_kwargs['max_num_views'] // 2),
             debug=self.debug,
             **kwargs
         )
@@ -593,6 +600,9 @@ class MVEditRunner:
             save_interval=self.save_interval,
             save_all_interval=self.save_interval,
             force_auto_uv=retex_kwargs['force_auto_uv'],
+            max_num_views=partial(
+                default_max_num_views_texture,
+                start_num=retex_kwargs['max_num_views']),
             debug=self.debug,
         )
         return out_mesh, ingp_states

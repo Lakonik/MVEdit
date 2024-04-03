@@ -75,6 +75,7 @@ def create_auxiliary_prompt_opts(var_dict, aux_prompt='', aux_negative_prompt=''
 
 
 def create_batch_size_opts(var_dict,
+                           max_num_views=None,
                            diff_bs=10,
                            patch_size=128,
                            patch_bs_nerf=1,
@@ -82,6 +83,10 @@ def create_batch_size_opts(var_dict,
                            patch_bs=8):
     if diff_bs is not None:
         with gr.Column(variant='compact', elem_classes=['custom-spacing']):
+            if max_num_views is not None:
+                var_dict['max_num_views'] = gr.Slider(
+                    label='Max # of views', minimum=16, maximum=256, step=1, value=max_num_views,
+                    elem_classes=['force-hide-container'])
             var_dict['diff_bs'] = gr.Slider(
                 1, 32, value=diff_bs, step=1, label='Diffusion batch size (# of views)',
                 elem_classes=['force-hide-container'])

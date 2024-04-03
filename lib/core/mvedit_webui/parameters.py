@@ -10,6 +10,7 @@ nerf_mesh_defaults = OrderedDict([
     ('random_init', None),
     ('cfg_scale', 7),
     ('checkpoint', 'runwayml/stable-diffusion-v1-5'),
+    ('max_num_views', 32),
     ('aux_prompt', 'best quality, sharp focus, photorealistic, extremely detailed'),
     ('aux_negative_prompt', 'worst quality, low quality, depth of field, blurry, out of focus, low-res, '
                             'illustration, painting, drawing'),
@@ -71,6 +72,7 @@ retex_defaults = OrderedDict([
     ('cfg_scale', 7),
     ('force_auto_uv', False),
     ('checkpoint', 'Lykon/dreamshaper-8'),
+    ('max_num_views', 32),
     ('aux_prompt', 'best quality'),
     ('aux_negative_prompt', 'worst quality, low quality'),
     ('diff_bs', None),
@@ -93,12 +95,12 @@ stablessdnerf_signatures = OrderedDict([
 )
 
 text_3d_to_3d_params = dict(
-    normal_reg_weight=0.6,
-    start_entropy_weight=0.25,
-    end_entropy_weight=3.0,
+    alpha_soften=0.01,
+    normal_reg_weight=1.2,
+    start_entropy_weight=0.0,
+    end_entropy_weight=4.0,
     mesh_smoothness=0.5,
     start_lr=0.0075,
-    alpha_soften=0.0,
 )
 
 text_3d_to_3d_superres_params = dict(
@@ -106,6 +108,7 @@ text_3d_to_3d_superres_params = dict(
 )
 
 instruct_3d_to_3d_params = dict(
+    cfg_scale=5.0,
     normal_reg_weight=2.0,
     start_entropy_weight=0.0,
     end_entropy_weight=4.0,
@@ -122,12 +125,12 @@ instruct_retex_params = dict(
 )
 
 stablessdnerf_to_mesh_params = dict(
-    normal_reg_weight=0.1,
-    start_entropy_weight=0.25,
-    end_entropy_weight=3.0,
+    alpha_soften=0.01,
+    normal_reg_weight=0.2,
+    start_entropy_weight=0.0,
+    end_entropy_weight=4.0,
     mesh_smoothness=0.5,
     start_lr=0.01,
-    alpha_soften=0.0,
 )
 
 

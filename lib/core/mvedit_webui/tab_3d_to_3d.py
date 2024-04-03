@@ -43,7 +43,7 @@ def create_interface_3d_to_3d(
                 if examples is not None:
                     gr.Examples(
                         examples=examples,
-                        inputs=[var_dict[k] for k in ['in_mesh', 'front_view_id', 'prompt', 'denoising_strength']],
+                        inputs=[var_dict[k] for k in ['in_mesh', 'front_view_id', 'prompt', 'denoising_strength', 'cfg_scale']],
                         outputs=[var_dict['in_mv'], var_dict['proc_mesh']],
                         fn=partial(preproc_api, cache_dir=interface.GRADIO_CACHE,
                                    render_bs=_nerf_mesh_defaults['render_bs']),
@@ -55,7 +55,7 @@ def create_interface_3d_to_3d(
                 base_opts.render()
                 var_dict['superres'] = dict()
                 create_superres_opts(
-                    var_dict['superres'], _superres_defaults, denoising_strength=0.35,
+                    var_dict['superres'], _superres_defaults, denoising_strength=0.4,
                     n_inverse_steps=superres_n_inverse_steps, show_advanced=advanced)
                 if advanced:
                     gr.Markdown('### Advanced settings')
@@ -66,7 +66,7 @@ def create_interface_3d_to_3d(
                         var_dict, **{key: _nerf_mesh_defaults[key] for key in ['aux_prompt', 'aux_negative_prompt']})
                     create_batch_size_opts(
                         var_dict, diff_bs=diff_bs, **{key: _nerf_mesh_defaults[key] for key in [
-                            'patch_size', 'patch_bs_nerf', 'render_bs', 'patch_bs']})
+                            'patch_size', 'patch_bs_nerf', 'render_bs', 'patch_bs', 'max_num_views']})
                     create_loss_sliders(
                         var_dict, **{key: _nerf_mesh_defaults[key] for key in [
                             'alpha_soften', 'normal_reg_weight', 'start_entropy_weight', 'end_entropy_weight',

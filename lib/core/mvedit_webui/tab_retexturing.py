@@ -70,7 +70,7 @@ def create_interface_retexturing(
                         var_dict, **{key: _retex_defaults[key] for key in ['aux_prompt', 'aux_negative_prompt']})
                     create_batch_size_opts(
                         var_dict, diff_bs=diff_bs, patch_bs_nerf=None, **{key: _retex_defaults[key] for key in [
-                            'patch_size', 'render_bs', 'patch_bs']})
+                            'patch_size', 'render_bs', 'patch_bs', 'max_num_views']})
                     create_optimization_opts(
                         var_dict, n_inverse_steps=n_inverse_steps, init_inverse_steps=init_inverse_steps,
                         tet_resolution=None, tet_init_inverse_steps=None,

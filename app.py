@@ -127,9 +127,9 @@ def main():
                         _, var_text_3d_to_3d = create_interface_3d_to_3d(
                             runner.run_mesh_preproc, runner.run_3d_to_3d,
                             examples=[
-                                ['demo/examples_meshes/lara.glb', 3, 'tomb raider lara croft, wearing a backpack', 0.8],
-                                ['demo/examples_meshes/zuckerberg_hr.glb', 0, 'elon musk cg rendering', 0.8],
-                                ['demo/examples_meshes/camel.glb', -1, 'cg rendering of a camel', 0.8],
+                                ['demo/examples_meshes/lara.glb', 3, 'tomb raider lara croft, wearing a backpack', 0.8, 7],
+                                ['demo/examples_meshes/zuckerberg_hr.glb', 0, 'elon musk cg rendering', 0.8, 7],
+                                ['demo/examples_meshes/camel.glb', -1, 'cg rendering of a camel', 0.8, 7],
                             ],
                             denoising_strength=0.7, api_names=['3d_preproc', 'text_3d_to_3d'],
                             diff_bs=args.diff_bs, advanced=args.advanced)
@@ -137,10 +137,11 @@ def main():
                         _, var_instruct_3d_to_3d = create_interface_3d_to_3d(
                             runner.run_mesh_preproc, runner.run_3d_to_3d,
                             examples=[
-                                ['demo/examples_meshes/lara_hr.glb', 3, 'turn her into a cyborg', 1.0],
-                                ['demo/examples_meshes/lara_hr.glb', 3, 'as a zelda cosplay, blue outfit', 1.0],
-                                ['demo/examples_meshes/cj.glb', 9, 'give him a green jacket', 0.88],
-                                ['demo/examples_meshes/polnareff.glb', 9, 'make it a marble roman sculpture', 1.0],
+                                ['demo/examples_meshes/polnareff.glb', 9, 'as a deadpool cosplay photo', 1.0, 5],
+                                ['demo/examples_meshes/lara_hr.glb', 3, 'turn her into a cyborg', 1.0, 5],
+                                ['demo/examples_meshes/lara_hr.glb', 3, 'as a zelda cosplay, blue outfit', 1.0, 6],
+                                ['demo/examples_meshes/cj.glb', 9, 'give him a green jacket', 1.0, 5],
+                                ['demo/examples_meshes/polnareff.glb', 9, 'make it a marble roman sculpture', 1.0, 6],
                             ],
                             denoising_strength=1.0, api_names=[False, 'instruct_3d_to_3d'],
                             diff_bs=args.diff_bs, advanced=args.advanced, instruct_3d_to_3d=True)
