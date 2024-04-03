@@ -898,7 +898,7 @@ class MVEditRunner:
         print(f'\nRunning {mode} 3D-to-3D with seed {seed}...')
         set_random_seed(seed, deterministic=True)
         camera_poses = random_surround_views(
-            self.proc_3d_to_3d_camera_distance, 32,
+            self.proc_3d_to_3d_camera_distance, nerf_mesh_kwargs['max_num_views'],
             self.proc_3d_to_3d_min_elev, self.proc_3d_to_3d_max_elev, use_linspace=True
         )[:, :3].to(self.device)
         focal = 512 / (2 * np.tan(np.radians(self.proc_3d_to_3d_fov / 2)))
@@ -1027,17 +1027,17 @@ class MVEditRunner:
 
         set_random_seed(seed, deterministic=True)
         camera_poses = random_surround_views(
-            self.proc_3d_to_3d_camera_distance, 32,
+            self.proc_3d_to_3d_camera_distance, retex_kwargs['max_num_views'],
             self.proc_retex_min_elev, self.proc_retex_max_elev, use_linspace=True,
             begin_rad=front_azi if front_azi is not None else 0
         )[:, :3].to(self.device)
         if front_azi is not None:
-            cam_weights = [2.0] + [1.0] * 32  # including aux
+            cam_weights = [2.0] + [1.0] * retex_kwargs['max_num_views']  # including aux
             aux_camera_poses = torch.from_numpy(get_pose_from_angles_np(
                  np.array([front_azi], dtype=np.float32),
                  np.array([0.6], dtype=np.float32),
                  np.array([self.proc_3d_to_3d_camera_distance], dtype=np.float32)))[:, :3].to(self.device)
-            keep_views = [0, 32]
+            keep_views = [0, retex_kwargs['max_num_views']]
         else:
             cam_weights = aux_camera_poses = None
             keep_views = None
@@ -1250,7 +1250,7 @@ class MVEditRunner:
         print(f'\nRunning StableSSDNeRF to mesh with seed {seed}...')
         set_random_seed(seed, deterministic=True)
         camera_poses = random_surround_views(
-            self.ssdnerf_camera_distance, 32, self.ssdnerf_min_elev, self.ssdnerf_max_elev,
+            self.ssdnerf_camera_distance, nerf_mesh_kwargs['max_num_views'], self.ssdnerf_min_elev, self.ssdnerf_max_elev,
             use_linspace=True
         )[:, :3].to(self.device)
         focal = self.ssdnerf_render_size / (2 * np.tan(np.radians(self.ssdnerf_fov / 2)))
