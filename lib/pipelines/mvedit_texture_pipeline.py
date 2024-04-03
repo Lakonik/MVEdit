@@ -11,14 +11,13 @@ from typing import Dict, Optional, Union, List, Tuple, Callable
 from PIL import Image
 from transformers import CLIPTextModel, CLIPTokenizer
 from diffusers import AutoencoderKL, UNet2DConditionModel, StableDiffusionControlNetPipeline, \
-    DPMSolverMultistepScheduler, DDIMScheduler
+    DPMSolverMultistepScheduler, DPMSolverSDEScheduler
 from diffusers.models import ControlNetModel
 from diffusers.pipelines.controlnet import MultiControlNetModel
 from diffusers.schedulers import KarrasDiffusionSchedulers
 from copy import deepcopy
 
 from lib.core import depth_to_normal, get_noise_scales
-from lib.models import SRVGGNetCompact
 from lib.models.autoencoders.base_nerf import BaseNeRF, get_ray_directions
 from lib.models.autoencoders.base_mesh import Mesh
 from lib.models.decoders.base_mesh_renderer import MeshRenderer
@@ -341,6 +340,8 @@ class MVEditTexturePipeline(MVEdit3DPipeline):
                     cam_positions[None], cam_positions[None], compute_mode='donot_use_mm_for_euclid_dist'
                 ).squeeze(0) * cam_weights[:, None]
                 dists = dists + 999999 * torch.eye(len(dists), dtype=dists.dtype, device=device)
+                if isinstance(self.scheduler, DPMSolverSDEScheduler):
+                    batch_scheduler = [deepcopy(self.scheduler) for _ in range(num_cameras)]
 
             else:
                 max_num_cameras = max(int(round(max_num_views(progress))), num_keep_views)
@@ -370,6 +371,8 @@ class MVEditTexturePipeline(MVEdit3DPipeline):
                     if isinstance(self.scheduler, DPMSolverMultistepScheduler):
                         self.scheduler.model_outputs = [output[keep_ids] if output is not None else None for output in
                                                         self.scheduler.model_outputs]
+                    elif isinstance(self.scheduler, DPMSolverSDEScheduler):
+                        batch_scheduler = [batch_scheduler[keep_id] for keep_id in keep_ids]
                     num_cameras = max_num_cameras
 
             # ================= Denoising step =================
@@ -476,7 +479,12 @@ class MVEditTexturePipeline(MVEdit3DPipeline):
                     ref_noise = (latents_scaled[:, :, :64] - ref_latents * sqrt_alpha_bar_t
                                  ) / sqrt_one_minus_alpha_bar_t
                     merged_noise = torch.cat([ref_noise, merged_noise], dim=2)
-                latents = self.scheduler.step(merged_noise, t, latents, return_dict=False)[0]
+                if isinstance(self.scheduler, DPMSolverSDEScheduler):
+                    latents = [batch_scheduler[i].step(merged_noise[i:i+1], t, latents[i:i+1], return_dict=False)[0]
+                               for i in range(num_cameras)]
+                    latents = torch.cat(latents, dim=0)
+                else:
+                    latents = self.scheduler.step(merged_noise, t, latents, return_dict=False)[0]
 
             else:
                 if denoising_strength is None:

@@ -42,9 +42,6 @@ def create_interface_text_to_img_to_3d(sd_api, examples=None, advanced=True):
                 create_generate_bar(var_dict, text='Generate', seed=-1)
                 create_base_opts(
                     var_dict, scheduler='DPMSolverMultistep',
-                    scheduler_dropdown=[
-                        'DPMSolverSDE', 'DPMSolverMultistep', 'DPMSolverSDEKarras', 'DPMSolverMultistepKarras',
-                        'EulerAncestralDiscrete', 'DDIM'],
                     steps=32, denoising_strength=None, cfg_scale=image_defaults['cfg_scale'])
                 if advanced:
                     gr.Markdown('### Advanced settings')

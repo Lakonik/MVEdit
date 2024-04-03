@@ -38,6 +38,7 @@ def create_generate_bar(var_dict, text='Generate', variant='primary', seed=-1):
 def create_base_opts(var_dict,
                      scheduler='DPMSolverMultistep',
                      scheduler_dropdown=['DPMSolverMultistep', 'DPMSolverMultistepKarras',
+                                         'DPMSolverSDE', 'DPMSolverSDEKarras',
                                          'EulerAncestralDiscrete', 'DDIM'],
                      steps=24,
                      denoising_strength=0.5,
@@ -212,9 +213,9 @@ def create_superres_opts(
         var_dict,
         superres_signatures,
         do_superres=True, scheduler='DPMSolverSDEKarras',
-        scheduler_dropdown=[
-            'DPMSolverSDE', 'DPMSolverMultistep', 'DPMSolverSDEKarras', 'DPMSolverMultistepKarras',
-            'EulerAncestralDiscrete', 'DDIM'],
+        scheduler_dropdown=['DPMSolverMultistep', 'DPMSolverMultistepKarras',
+                            'DPMSolverSDE', 'DPMSolverSDEKarras',
+                            'EulerAncestralDiscrete', 'DDIM'],
         steps=24, denoising_strength=0.4, random_init=False,
         n_inverse_steps=48,
         show_advanced=True):
