@@ -111,6 +111,28 @@ def random_surround_views(camera_distance, num_cameras, min_angle=0.1, max_angle
     return poses
 
 
+def random_surround_views_v2(
+        num_cameras, min_angle_deg, max_angle_deg, min_distance, max_distance, center_std, use_linspace=False, begin_rad=0):
+    min_angle = min_angle_deg * (np.pi / 180)
+    max_angle = max_angle_deg * (np.pi / 180)
+    camera_distance = torch.rand(num_cameras) * (max_distance - min_distance) + min_distance
+    centers = torch.randn(num_cameras, 3) * center_std
+    if use_linspace:
+        rad = torch.from_numpy(
+            np.linspace(0 + np.pi / num_cameras, 2 * np.pi - np.pi / num_cameras, num=num_cameras, dtype=np.float32))
+    else:
+        rad = torch.rand(num_cameras) * (2 * np.pi)
+    rad += begin_rad - rad[0]
+    angles = torch.rand(num_cameras) * (max_angle - min_angle) + min_angle
+    pos_xy = torch.stack([rad.cos(), rad.sin()], dim=-1)
+    pos = torch.cat([pos_xy * angles.cos().unsqueeze(-1), angles.sin().unsqueeze(-1)], dim=-1) * camera_distance[:, None]
+    rot = look_at(pos, centers, pos.new_tensor([0, 0, 1]).expand(pos.size()))
+    poses = torch.cat(
+        [torch.cat([rot, pos.unsqueeze(-1)], dim=-1),
+         rot.new_tensor([0, 0, 0, 1]).expand(num_cameras, 1, -1)], dim=-2)
+    return poses
+
+
 def sample_within_circle(num_samples, device=None):
     r = torch.sqrt(torch.rand(num_samples, device=device))
     theta = torch.rand(num_samples, device=device) * 2 * math.pi

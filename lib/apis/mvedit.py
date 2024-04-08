@@ -611,8 +611,10 @@ class MVEditRunner:
     def run_mesh_preproc(self, in_mesh, *args, cache_dir=None, render_bs=8):
         if self.empty_cache:
             torch.cuda.empty_cache()
-        if in_mesh is None or os.path.getsize(in_mesh) > 10000000:
+        if in_mesh is None:
             return gr.Gallery(value=self.dummy_mv, selected_index=None), None, None
+        if os.path.getsize(in_mesh) > 20000000:
+            raise ValueError('Input mesh file is too large.')
         if len(args) > 0:
             front_view_id = args[0]
         else:
