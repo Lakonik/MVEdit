@@ -179,12 +179,12 @@ def highpass(x, std=5, offset=0.5):
     return offset + x - F_t.gaussian_blur(x, int(round(std)) * 6 + 1, std)
 
 
-def init_common_modules(device, image_enhancer=True, segmentation=True, tonemapping=True):
+def init_common_modules(device, image_enhancer=True, segmentation=True, tonemapping=True, dtype=torch.bfloat16):
     if image_enhancer:
         image_enhancer = SRVGGNetCompact(
             num_in_ch=3, num_out_ch=3, num_feat=64, num_conv=32, upscale=4, act_type='prelu',
             pretrained='https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-general-x4v3.pth'
-        ).eval().requires_grad_(False).to(dtype=torch.bfloat16, device=device)
+        ).eval().requires_grad_(False).to(dtype=dtype, device=device)
 
     mesh_renderer = MeshRenderer(
         near=0.01,
@@ -193,7 +193,7 @@ def init_common_modules(device, image_enhancer=True, segmentation=True, tonemapp
         texture_filter='linear-mipmap-linear').to(device)
 
     if segmentation:
-        segmentation = TracerUniversalB7().to(device)
+        segmentation = TracerUniversalB7(torch_dtype=dtype).to(device)
 
     nerf = BaseNeRF(
         code_size=(3, 16, 160, 160),
@@ -216,8 +216,8 @@ def init_common_modules(device, image_enhancer=True, segmentation=True, tonemapp
     controlnet_path = 'lllyasviel/control_v11f1e_sd15_tile'
     controlnet_depth_path = 'lllyasviel/control_v11f1p_sd15_depth'
 
-    controlnet = ControlNetModel.from_pretrained(controlnet_path, torch_dtype=torch.bfloat16).to(device)
-    controlnet_depth = ControlNetModel.from_pretrained(controlnet_depth_path, torch_dtype=torch.bfloat16).to(device)
+    controlnet = ControlNetModel.from_pretrained(controlnet_path, torch_dtype=dtype).to(device)
+    controlnet_depth = ControlNetModel.from_pretrained(controlnet_depth_path, torch_dtype=dtype).to(device)
 
     return image_enhancer, mesh_renderer, segmentation, nerf, tonemapping, controlnet, controlnet_depth
 

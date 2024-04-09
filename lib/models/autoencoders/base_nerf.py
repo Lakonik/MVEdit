@@ -581,17 +581,18 @@ class BaseNeRF(nn.Module):
             log_vars = dict(test_psnr=float(test_psnr.mean()),
                             test_ssim=float(test_ssim.mean()))
             if self.lpips is not None:
+                lpips_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
                 if len(self.lpips) == 0:
                     lpips_eval = lpips.LPIPS(
                         net='vgg', eval_mode=True, pnet_tune=False).to(
-                        device=pred_imgs.device, dtype=torch.bfloat16)
+                        device=pred_imgs.device, dtype=lpips_dtype)
                     self.lpips.append(lpips_eval)
                 test_lpips = []
                 for pred_imgs_batch, target_imgs_batch in zip(
                         pred_imgs.split(LPIPS_BS, dim=0), target_imgs.split(LPIPS_BS, dim=0)):
                     test_lpips.append(self.lpips[0](
-                        (pred_imgs_batch * 2 - 1).to(torch.bfloat16),
-                        (target_imgs_batch * 2 - 1).to(torch.bfloat16)).flatten())
+                        (pred_imgs_batch * 2 - 1).to(lpips_dtype),
+                        (target_imgs_batch * 2 - 1).to(lpips_dtype)).flatten())
                 test_lpips = torch.cat(test_lpips, dim=0)
                 log_vars.update(test_lpips=float(test_lpips.mean()))
             else:

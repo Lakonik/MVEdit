@@ -27,15 +27,16 @@ class LPIPSLoss(nn.Module):
 
     def forward(self, pred, target, weight=None, avg_factor=None):
         dtype = pred.dtype
+        lpips_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
         if len(self.lpips) == 0:
             lpips_eval = lpips.LPIPS(
                 net=self.net, eval_mode=True, pnet_tune=False).to(
-                device=pred.device, dtype=torch.bfloat16)
+                device=pred.device, dtype=lpips_dtype)
             self.lpips.append(lpips_eval)
         if self.normalize_inputs:
             pred = pred * 2 - 1
             target = target * 2 - 1
         return lpips_loss(
-            pred.to(torch.bfloat16), target.to(torch.bfloat16), lpips_fun=self.lpips[0],
+            pred.to(lpips_dtype), target.to(lpips_dtype), lpips_fun=self.lpips[0],
             weight=weight, avg_factor=avg_factor
         ).to(dtype) * self.loss_weight

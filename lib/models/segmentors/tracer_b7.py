@@ -33,7 +33,7 @@ class TracerUniversalB7(nn.Module):
         else:
             self.input_image_size = (input_image_size, input_image_size)
         self.init_weights(pretrained)
-        self.dtype = getattr(torch, torch_dtype)
+        self.dtype = getattr(torch, torch_dtype) if isinstance(torch_dtype, str) else torch_dtype
         self.to(self.dtype)
         self.transform = transforms.Compose(
             [

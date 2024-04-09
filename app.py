@@ -32,6 +32,7 @@ def parse_args():
     parser.add_argument('--empty-cache', action='store_true', help='Empty the cache directory')
     parser.add_argument('--unload-models', action='store_true', help='Auto-unload unused models to free VRAM')
     parser.add_argument('--share', action='store_true', help='Enable Gradio sharing')
+    parser.add_argument('--bf16', action='store_true', help='Use BF16 instead of FP16')
     return parser.parse_args()
 
 
@@ -51,6 +52,7 @@ def main():
         unload_models=args.unload_models,
         out_dir=osp.join(osp.dirname(__file__), 'viz') if args.debug else None,
         save_interval=1 if args.debug else None,
+        dtype=torch.bfloat16 if args.bf16 else torch.float16,
         debug=args.debug,
         no_safe=args.no_safe
     )

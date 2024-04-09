@@ -29,7 +29,6 @@ https://github.com/Lakonik/MVEdit/assets/53893837/062a0622-47f8-4068-b478-aa4a80
 
 The code has been tested in the environment described as follows:
 
-- Ampere or later NVIDIA GPU (for bfloat16 support)
 - Linux (tested on Ubuntu 20 & 22)
 - [CUDA Toolkit](https://developer.nvidia.com/cuda-toolkit-archive) 12
 - [PyTorch](https://pytorch.org/get-started/previous-versions/) 2.1.2

@@ -54,11 +54,12 @@ def _api_wrapper(func):
 
 
 class MVEditRunner:
-    def __init__(self, device, local_files_only=False, empty_cache=True, unload_models=True,
+    def __init__(self, device, local_files_only=False, empty_cache=True, unload_models=True, dtype=torch.bfloat16,
                  out_dir=None, save_interval=None, debug=False, no_safe=False):
         self.local_files_only = local_files_only
         self.empty_cache = empty_cache
         self.unload_models = unload_models
+        self.dtype = dtype
         if out_dir is not None:
             self.out_dir_3d = osp.join(out_dir, '3d')
             self.out_dir_superres = osp.join(out_dir, 'superres')
@@ -71,8 +72,9 @@ class MVEditRunner:
         print('\nInitializing modules...')
         self.device = device
         self.no_safe = no_safe
-        self.image_enhancer, self.mesh_renderer, self.segmentation, self.nerf, \
-            self.tonemapping, self.controlnet, self.controlnet_depth = init_common_modules(self.device)
+        (self.image_enhancer, self.mesh_renderer, self.segmentation, self.nerf,
+         self.tonemapping, self.controlnet, self.controlnet_depth) = init_common_modules(
+            device=self.device, dtype=self.dtype)
 
         self.stable_diffusion_checkpoint = None
         self.vae = None
@@ -143,26 +145,26 @@ class MVEditRunner:
         if stable_diffusion_checkpoint != self.stable_diffusion_checkpoint:
             print('\nLoading Stable Diffusion...')
             self.vae = AutoencoderKL.from_pretrained(
-                stable_diffusion_checkpoint, subfolder='vae', torch_dtype=torch.bfloat16,
+                stable_diffusion_checkpoint, subfolder='vae', torch_dtype=self.dtype,
                 local_files_only=self.local_files_only)
             self.text_encoder = CLIPTextModel.from_pretrained(
-                stable_diffusion_checkpoint, subfolder='text_encoder', torch_dtype=torch.bfloat16,
+                stable_diffusion_checkpoint, subfolder='text_encoder', torch_dtype=self.dtype,
                 local_files_only=self.local_files_only)
             self.tokenizer = CLIPTokenizer.from_pretrained(
-                stable_diffusion_checkpoint, subfolder='tokenizer', torch_dtype=torch.bfloat16,
+                stable_diffusion_checkpoint, subfolder='tokenizer', torch_dtype=self.dtype,
                 local_files_only=self.local_files_only)
             self.unet = UNet2DConditionModel.from_pretrained(
-                stable_diffusion_checkpoint, subfolder='unet', torch_dtype=torch.bfloat16,
+                stable_diffusion_checkpoint, subfolder='unet', torch_dtype=self.dtype,
                 local_files_only=self.local_files_only)
             self.vae.to(self.device)
             self.text_encoder.to(self.device)
             self.unet.to(self.device)
             if not self.no_safe:
                 self.safety_checker = StableDiffusionSafetyChecker.from_pretrained(
-                    stable_diffusion_checkpoint, subfolder='safety_checker', torch_dtype=torch.bfloat16,
+                    stable_diffusion_checkpoint, subfolder='safety_checker', torch_dtype=self.dtype,
                     local_files_only=self.local_files_only)
                 self.feature_extractor = CLIPImageProcessor.from_pretrained(
-                    stable_diffusion_checkpoint, subfolder='feature_extractor', torch_dtype=torch.bfloat16,
+                    stable_diffusion_checkpoint, subfolder='feature_extractor', torch_dtype=self.dtype,
                     local_files_only=self.local_files_only)
                 self.safety_checker.to(self.device)
             self.stable_diffusion_checkpoint = stable_diffusion_checkpoint
@@ -184,7 +186,7 @@ class MVEditRunner:
             stablessdnerf = init_model(
                 config, checkpoint='huggingface://Lakonik/stablessdnerf/stablessdnerf_cars_40k_emaonly.bin',
                 device=torch.device('cuda'))
-            stablessdnerf.diffusion_ema.to(torch.bfloat16)
+            stablessdnerf.diffusion_ema.to(self.dtype)
             stablessdnerf.eval()
             self.stablessdnerf = stablessdnerf
             print('StableSSDNeRF loaded.')
@@ -202,7 +204,7 @@ class MVEditRunner:
             print('\nLoading InstructPix2Pix ControlNet...')
             self.controlnet_ip2p = ControlNetModel.from_pretrained(
                 'lllyasviel/control_v11e_sd15_ip2p',
-                torch_dtype=torch.bfloat16,
+                torch_dtype=self.dtype,
                 local_files_only=self.local_files_only).to(self.device)
             print('InstructPix2Pix ControlNet loaded.')
             gc.collect()
@@ -225,7 +227,7 @@ class MVEditRunner:
         sampler_class = getattr(diffusers.schedulers, scheduler_class + 'Scheduler')
         if stable_diffusion_checkpoint != self.scheduler_ckpt or scheduler_type != self.scheduler_type:
             scheduler = sampler_class.from_pretrained(
-                stable_diffusion_checkpoint, subfolder='scheduler', torch_dtype=torch.bfloat16,
+                stable_diffusion_checkpoint, subfolder='scheduler', torch_dtype=self.dtype,
                 local_files_only=self.local_files_only)
             cfg = dict(scheduler.config)
             if '_use_default_values' in cfg:
@@ -253,7 +255,7 @@ class MVEditRunner:
                 'huggingface://h94/IP-Adapter/models/ip-adapter-plus_sd15.bin',
                 'h94/IP-Adapter',
                 local_files_only=self.local_files_only,
-                device=self.device, dtype=torch.bfloat16)
+                device=self.device, dtype=self.dtype)
             self.ip_adapter_applied = True
             print('IP-Adapter loaded.')
         gc.collect()
@@ -284,7 +286,7 @@ class MVEditRunner:
             else:
                 state_dict = checkpoint
             normal_model.load_state_dict(state_dict)
-            normal_model.to(device=self.device, dtype=torch.bfloat16)
+            normal_model.to(device=self.device, dtype=self.dtype)
             self.normal_model = normal_model
             print('Normal model loaded.')
             gc.collect()
@@ -319,7 +321,7 @@ class MVEditRunner:
         if checkpoint != self.zero123plus_checkpoint:
             print('\nLoading Zero123++...')
             zero123plus_pipe = Zero123PlusPipeline.from_pretrained(
-                checkpoint, torch_dtype=torch.bfloat16, local_files_only=self.local_files_only)
+                checkpoint, torch_dtype=self.dtype, local_files_only=self.local_files_only)
             zero123plus_pipe.scheduler = EulerAncestralDiscreteScheduler.from_config(
                 zero123plus_pipe.scheduler.config, timestep_spacing='trailing')
             zero123plus_pipe.to(self.device)
@@ -328,7 +330,7 @@ class MVEditRunner:
             if normal_controlnet is not None:
                 zero123plus_normal_pipeline = copy(zero123plus_pipe)
                 zero123plus_normal_pipeline.add_controlnet(ControlNetModel.from_pretrained(
-                    normal_controlnet, torch_dtype=torch.bfloat16, local_files_only=self.local_files_only
+                    normal_controlnet, torch_dtype=self.dtype, local_files_only=self.local_files_only
                 ), conditioning_scale=1.0)
                 zero123plus_normal_pipeline.to(self.device)
                 self.zero123plus_normal_pipe = zero123plus_normal_pipeline
