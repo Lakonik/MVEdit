@@ -646,8 +646,8 @@ class MVEdit3DPipeline(StableDiffusionControlNetPipeline):
         cam_weights_mean = cam_weights.mean()
 
         tgt_masks_blur = F_t.gaussian_blur(
-            tgt_masks.square().squeeze(0).permute(0, 3, 1, 2), (9, 9), (1.5, 1.5)
-        ).permute(0, 2, 3, 1)[None].sqrt().clamp(min=alpha_soften, max=1 - alpha_soften)
+            tgt_masks.clamp(min=alpha_soften, max=1 - alpha_soften).square().squeeze(0).permute(0, 3, 1, 2), (9, 9), (1.5, 1.5)
+        ).permute(0, 2, 3, 1)[None].sqrt()
 
         # (1, num_imgs, h, w, 3)
         directions = get_ray_directions(
