@@ -11,11 +11,13 @@ from transformers import CLIPTextModel as _CLIPTextModel
 from diffusers.models import AutoencoderKL
 from diffusers.models.unet_2d_condition import UNet2DConditionModel as _UNet2DConditionModel
 from diffusers.models.attention_processor import Attention, LoRALinearLayer, LoRAXFormersAttnProcessor, LoRAAttnProcessor, LoRAAttnProcessor2_0, AttnProcessor, AttnProcessor2_0, XFormersAttnProcessor
-from diffusers.models.vae import Decoder
+try:
+    from diffusers.models.vae import Decoder
+except ModuleNotFoundError:
+    from diffusers.models.autoencoders.vae import Decoder
 from diffusers.models.resnet import ResnetBlock2D
 from diffusers.models.modeling_utils import ModelMixin
-from diffusers.utils import TEXT_ENCODER_ATTN_MODULE, is_xformers_available
-from diffusers.loaders import LoraLoaderMixin
+from diffusers.utils.import_utils import is_xformers_available
 
 from mmcv.runner import load_checkpoint, _load_checkpoint, load_state_dict
 from mmcv.cnn.utils import constant_init, kaiming_init
@@ -23,6 +25,9 @@ from mmgen.models.builder import MODULES, build_module
 from mmgen.utils import get_root_logger
 
 from ...core import rgetattr
+
+
+TEXT_ENCODER_ATTN_MODULE = '.self_attn'
 
 
 def ceildiv(a, b):
@@ -261,7 +266,7 @@ class CLIPTextModel(_CLIPTextModel):
 
 
 @MODULES.register_module()
-class CLIPLoRAWrapper(nn.Module, LoraLoaderMixin):
+class CLIPLoRAWrapper(nn.Module):
     def __init__(
             self,
             text_encoder,
@@ -270,6 +275,7 @@ class CLIPLoRAWrapper(nn.Module, LoraLoaderMixin):
                 rank=4)):
         super().__init__()
         self.text_encoder = build_module(text_encoder)
+        self.lora_scale = 1.0
         lora_attn_procs = {}
         for name, module in self.text_encoder.named_modules():
             if name.endswith(TEXT_ENCODER_ATTN_MODULE):
@@ -285,6 +291,64 @@ class CLIPLoRAWrapper(nn.Module, LoraLoaderMixin):
                 lora_attn_procs[name] = m
         self._modify_text_encoder(lora_attn_procs)
         self.lora_layers = nn.ModuleList(lora_attn_procs.values())
+
+    @property
+    def _lora_attn_processor_attr_to_text_encoder_attr(self):
+        return {
+            'to_q_lora': 'q_proj',
+            'to_k_lora': 'k_proj',
+            'to_v_lora': 'v_proj',
+            'to_out_lora': 'out_proj',
+        }
+
+    def _remove_text_encoder_monkey_patch(self):
+        # Loop over the CLIPAttention module of text_encoder
+        for name, attn_module in self.text_encoder.named_modules():
+            if name.endswith(TEXT_ENCODER_ATTN_MODULE):
+                # Loop over the LoRA layers
+                for _, text_encoder_attr in self._lora_attn_processor_attr_to_text_encoder_attr.items():
+                    # Retrieve the q/k/v/out projection of CLIPAttention
+                    module = attn_module.get_submodule(text_encoder_attr)
+                    if hasattr(module, "old_forward"):
+                        # restore original `forward` to remove monkey-patch
+                        module.forward = module.old_forward
+                        delattr(module, "old_forward")
+
+    def _modify_text_encoder(self, attn_processors):
+        r"""
+        Monkey-patches the forward passes of attention modules of the text encoder.
+
+        Parameters:
+            attn_processors: Dict[str, `LoRAAttnProcessor`]:
+                A dictionary mapping the module names and their corresponding [`~LoRAAttnProcessor`].
+        """
+
+        # First, remove any monkey-patch that might have been applied before
+        self._remove_text_encoder_monkey_patch()
+
+        # Loop over the CLIPAttention module of text_encoder
+        for name, attn_module in self.text_encoder.named_modules():
+            if name.endswith(TEXT_ENCODER_ATTN_MODULE):
+                # Loop over the LoRA layers
+                for attn_proc_attr, text_encoder_attr in self._lora_attn_processor_attr_to_text_encoder_attr.items():
+                    # Retrieve the q/k/v/out projection of CLIPAttention and its corresponding LoRA layer.
+                    module = attn_module.get_submodule(text_encoder_attr)
+                    lora_layer = attn_processors[name].get_submodule(attn_proc_attr)
+
+                    # save old_forward to module that can be used to remove monkey-patch
+                    old_forward = module.old_forward = module.forward
+
+                    # create a new scope that locks in the old_forward, lora_layer value for each new_forward function
+                    # for more detail, see https://github.com/huggingface/diffusers/pull/3490#issuecomment-1555059060
+                    def make_new_forward(old_forward, lora_layer):
+                        def new_forward(x):
+                            result = old_forward(x) + self.lora_scale * lora_layer(x)
+                            return result
+
+                        return new_forward
+
+                    # Monkey-patch.
+                    module.forward = make_new_forward(old_forward, lora_layer)
 
     def forward(self, *args, **kwargs):
         return self.text_encoder.forward(*args, **kwargs)

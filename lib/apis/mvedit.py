@@ -24,6 +24,7 @@ from segment_anything import sam_model_registry, SamPredictor
 from mmcv.runner import set_random_seed
 from mmcv.runner.checkpoint import _load_checkpoint
 from huggingface_hub import hf_hub_download
+from diffusers.models.attention_processor import AttnProcessor
 from .inference import init_model
 from lib.core.utils.camera_utils import (
     get_pose_from_angles, random_surround_views, get_pose_from_angles_np, view_prompts)
@@ -265,7 +266,7 @@ class MVEditRunner:
             print('\nUnloading IP adapter...')
             for module in [self.unet, self.controlnet, self.controlnet_depth, self.controlnet_ip2p]:
                 if module is not None:
-                    module.set_default_attn_processor()
+                    module.set_attn_processor(AttnProcessor())
             self.ip_adapter = None
             self.ip_adapter_applied = False
             print('IP adapter unloaded.')
