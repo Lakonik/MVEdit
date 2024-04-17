@@ -634,7 +634,7 @@ class MVEdit3DPipeline(StableDiffusionControlNetPipeline):
             patch_rgb_weight, patch_normal_weight, alpha_soften, normal_reg_weight, entropy_weight,  # loss weights
             nerf_code, density_grid, density_bitfield,  # nerf model
             render_size, intrinsics, intrinsics_size, camera_poses, cam_weights, cam_lights, patch_size,  # cameras
-            is_init, bg_width, ambient_light, dt_gamma_scale, init_shaded):
+            is_init, bg_width, ambient_light, dt_gamma_scale, init_shaded, debug=False):
         device = self.unet.device
         loss_tv = TVLoss(loss_weight=1.0, power=1.5)
         use_normal = tgt_normals is not None
@@ -657,6 +657,8 @@ class MVEdit3DPipeline(StableDiffusionControlNetPipeline):
 
         cond_rays_o, cond_rays_d = get_rays(directions, camera_poses[None], norm=True)
 
+        normal_bg = tgt_images.new_tensor(self.normal_bg)
+
         decoder_training_prev = self.nerf.decoder.training
         self.nerf.decoder.train(True)
 
@@ -666,12 +668,13 @@ class MVEdit3DPipeline(StableDiffusionControlNetPipeline):
             raybatch_inds, num_raybatch = self.nerf.get_raybatch_inds(tgt_images, n_inverse_rays)
             iter_density = 0
 
-            pixel_rgb_loss_ = []
-            patch_rgb_loss_ = []
-            alphas_loss_ = []
-            entropy_loss_ = []
-            normal_reg_loss_ = []
-            patch_normal_loss_ = []
+            if debug:
+                pixel_rgb_loss_ = []
+                patch_rgb_loss_ = []
+                alphas_loss_ = []
+                entropy_loss_ = []
+                normal_reg_loss_ = []
+                patch_normal_loss_ = []
             for inverse_step_id in range(inverse_steps):
                 if inverse_step_id % self.nerf.update_extra_interval == 0:
                     update_extra_state = self.nerf.update_extra_iters
@@ -715,8 +718,7 @@ class MVEdit3DPipeline(StableDiffusionControlNetPipeline):
                 # (num_patches, patch_size, patch_size, 3)
                 out_normals_fg = depth_to_normal(out_depth_fg, target_dir)
                 out_normals_fg_mask = out_alphas.reshape(-1, self.nerf.patch_size, self.nerf.patch_size, 1)
-                out_normals = out_normals_fg * out_normals_fg_mask + out_normals_fg.new_tensor(
-                    self.normal_bg) * (1 - out_normals_fg_mask)
+                out_normals = out_normals_fg * out_normals_fg_mask + normal_bg * (1 - out_normals_fg_mask)
                 out_normals_fg_weight = -F.max_pool2d(
                     -out_normals_fg_mask.detach().squeeze(-1).unsqueeze(1), 3, stride=1, padding=1
                 ).squeeze(1).unsqueeze(-1)
@@ -740,7 +742,6 @@ class MVEdit3DPipeline(StableDiffusionControlNetPipeline):
                 loss = pixel_rgb_loss = self.nerf.pixel_loss(
                     out_rgbs.reshape(target_rgbs.size()), target_rgbs,
                     weight=target_w / cam_weights_mean) * 4.5
-                pixel_rgb_loss_.append(pixel_rgb_loss.item())
 
                 alphas_loss = self.nerf.pixel_loss(
                     out_alphas.reshape(target_m_blur.size()), target_m_blur,
@@ -750,8 +751,6 @@ class MVEdit3DPipeline(StableDiffusionControlNetPipeline):
                     target_n.permute(0, 3, 1, 2) if use_normal else None,
                     weight=out_normals_fg_weight.permute(0, 3, 1, 2)) * (normal_reg_weight * 10)
                 loss = loss + alphas_loss + normal_reg_loss
-                alphas_loss_.append(alphas_loss.item())
-                normal_reg_loss_.append(normal_reg_loss.item())
 
                 bin_weights_sum = outputs['weights'].float()
                 bin_width = outputs['ts'][0][:, 1].float()
@@ -762,7 +761,12 @@ class MVEdit3DPipeline(StableDiffusionControlNetPipeline):
                     bg_weights_sum * (torch.log(bg_weights_sum.clamp(min=1e-6)) - math.log(bg_width))
                 )) * (entropy_weight / target_rgbs.shape[:-1].numel())
                 loss = loss + entropy_loss
-                entropy_loss_.append(entropy_loss.item())
+
+                if debug:
+                    pixel_rgb_loss_.append(pixel_rgb_loss.item())
+                    alphas_loss_.append(alphas_loss.item())
+                    normal_reg_loss_.append(normal_reg_loss.item())
+                    entropy_loss_.append(entropy_loss.item())
 
                 if patch_rgb_weight > 0:
                     patch_rgb_loss = self.nerf.patch_loss(
@@ -771,7 +775,8 @@ class MVEdit3DPipeline(StableDiffusionControlNetPipeline):
                         weight=target_w[:, 0, 0, 0] / cam_weights_mean
                     ) * patch_rgb_weight
                     loss = loss + patch_rgb_loss
-                    patch_rgb_loss_.append(patch_rgb_loss.item())
+                    if debug:
+                        patch_rgb_loss_.append(patch_rgb_loss.item())
 
                 if use_normal and patch_normal_weight > 0:
                     patch_normal_loss = self.nerf.patch_loss(
@@ -780,29 +785,31 @@ class MVEdit3DPipeline(StableDiffusionControlNetPipeline):
                         weight=target_w[:, 0, 0, 0] / cam_weights_mean
                     ) * patch_normal_weight
                     loss = loss + patch_normal_loss
-                    patch_normal_loss_.append(patch_normal_loss.item())
+                    if debug:
+                        patch_normal_loss_.append(patch_normal_loss.item())
 
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
 
-            print_str = []
-            for name, loss in zip([
-                    'pixel_rgb_loss',
-                    'patch_rgb_loss',
-                    'alphas_loss',
-                    'entropy_loss',
-                    'normal_reg_loss',
-                    'patch_normal_loss'],
-                    [pixel_rgb_loss_,
-                     patch_rgb_loss_,
-                     alphas_loss_,
-                     entropy_loss_,
-                     normal_reg_loss_,
-                     patch_normal_loss_]):
-                if len(loss) > 0:
-                    print_str.append(f'{name}: {np.mean(loss):.4f}')
-            print('\n' + ', '.join(print_str))
+            if debug:
+                print_str = []
+                for name, loss in zip([
+                        'pixel_rgb_loss',
+                        'patch_rgb_loss',
+                        'alphas_loss',
+                        'entropy_loss',
+                        'normal_reg_loss',
+                        'patch_normal_loss'],
+                        [pixel_rgb_loss_,
+                         patch_rgb_loss_,
+                         alphas_loss_,
+                         entropy_loss_,
+                         normal_reg_loss_,
+                         patch_normal_loss_]):
+                    if len(loss) > 0:
+                        print_str.append(f'{name}: {np.mean(loss):.4f}')
+                print('\n' + ', '.join(print_str))
 
         self.nerf.decoder.train(decoder_training_prev)
 
@@ -812,7 +819,7 @@ class MVEdit3DPipeline(StableDiffusionControlNetPipeline):
             patch_rgb_weight, patch_normal_weight, alpha_soften, normal_reg_weight, mesh_normal_reg_weight,  # loss weights
             nerf_code, tet_verts, deform, tet_sdf, tet_indices, dmtet, in_mesh,  # mesh model
             render_size, intrinsics, intrinsics_size, camera_poses, cam_weights, lights, patch_size,  # cameras
-            is_end, ambient_light, mesh_reduction):
+            is_end, ambient_light, mesh_reduction, debug=False):
         device = self.unet.device
         loss_tv = TVLoss(loss_weight=1.0, power=1.5)
         use_normal = tgt_normals is not None
@@ -828,6 +835,8 @@ class MVEdit3DPipeline(StableDiffusionControlNetPipeline):
             render_size, render_size,
             intrinsics[None] * (render_size / intrinsics_size),
             norm=False, device=intrinsics.device)
+
+        normal_bg = tgt_images.new_tensor(self.normal_bg)
 
         decoder_training_prev = self.nerf.decoder.training
         self.nerf.decoder.train(True)
@@ -849,13 +858,14 @@ class MVEdit3DPipeline(StableDiffusionControlNetPipeline):
             if use_normal:
                 tgt_normals_batches = tgt_normals.squeeze(0)[camera_perm].split(render_bs, dim=0)
 
-            pixel_rgb_loss_ = []
-            patch_rgb_loss_ = []
-            alphas_loss_ = []
-            lapsmth_loss_ = []
-            norm_const_loss_ = []
-            normal_reg_loss_ = []
-            patch_normal_loss_ = []
+            if debug:
+                pixel_rgb_loss_ = []
+                patch_rgb_loss_ = []
+                alphas_loss_ = []
+                lapsmth_loss_ = []
+                norm_const_loss_ = []
+                normal_reg_loss_ = []
+                patch_normal_loss_ = []
             mesh_is_simplified = False
             for inverse_step_id in range(inverse_steps):
                 pose_batch = pose_batches[inverse_step_id % num_pose_batches]
@@ -894,14 +904,14 @@ class MVEdit3DPipeline(StableDiffusionControlNetPipeline):
                 out_normals_cos = -F.max_pool2d(  # alleviate edge effect
                     -out_normals_cos.permute(0, 3, 1, 2), 5, stride=1, padding=2).permute(0, 2, 3, 1)
                 out_normals = out_normals * out_normals_cos + out_normals.detach() * (1 - out_normals_cos)
-                out_normals_fg = (out_normals - out_normals.new_tensor(self.normal_bg)
-                                  * (1 - out_alphas)) / out_alphas.clamp(min=1e-3)
+                out_normals_fg = (out_normals - normal_bg * (1 - out_alphas)) / out_alphas.clamp(min=1e-3)
                 out_normals_fg_weight = out_alphas.detach()
 
                 loss = pixel_rgb_loss = self.nerf.pixel_loss(
                     out_rgbs.reshape(target_rgbs.size()), target_rgbs,
                     weight=target_w / cam_weights_mean) * 4.5
-                pixel_rgb_loss_.append(pixel_rgb_loss.item())
+                if debug:
+                    pixel_rgb_loss_.append(pixel_rgb_loss.item())
 
                 if not mesh_is_simplified:
                     alphas_loss = self.nerf.pixel_loss(
@@ -911,16 +921,14 @@ class MVEdit3DPipeline(StableDiffusionControlNetPipeline):
                         out_normals_fg.permute(0, 3, 1, 2),
                         target_n.permute(0, 3, 1, 2) if use_normal else None,
                         weight=out_normals_fg_weight.permute(0, 3, 1, 2)) * (normal_reg_weight * 2)
-                    loss = loss + alphas_loss + normal_reg_loss
-                    alphas_loss_.append(alphas_loss.item())
-                    normal_reg_loss_.append(normal_reg_loss.item())
-
-                if not mesh_is_simplified:
                     lapsmth_loss = laplacian_smooth_loss(in_mesh.v, in_mesh.f) * mesh_normal_reg_weight
                     norm_const_loss = normal_consistency(in_mesh.face_normals, in_mesh.f) * mesh_normal_reg_weight
-                    loss = loss + lapsmth_loss + norm_const_loss
-                    lapsmth_loss_.append(lapsmth_loss.item())
-                    norm_const_loss_.append(norm_const_loss.item())
+                    loss = loss + alphas_loss + normal_reg_loss + lapsmth_loss + norm_const_loss
+                    if debug:
+                        alphas_loss_.append(alphas_loss.item())
+                        normal_reg_loss_.append(normal_reg_loss.item())
+                        lapsmth_loss_.append(lapsmth_loss.item())
+                        norm_const_loss_.append(norm_const_loss.item())
 
                 out_rgb_patch = out_rgbs.reshape(
                     -1, render_size // patch_size, patch_size, render_size // patch_size, patch_size, 3
@@ -941,7 +949,8 @@ class MVEdit3DPipeline(StableDiffusionControlNetPipeline):
                         weight=target_w_patch_ / cam_weights_mean
                     ) * patch_rgb_weight
                     loss = loss + patch_rgb_loss
-                    patch_rgb_loss_.append(patch_rgb_loss.item())
+                    if debug:
+                        patch_rgb_loss_.append(patch_rgb_loss.item())
 
                 if use_normal and patch_normal_weight > 0 and not mesh_is_simplified:
                     out_normal_patch = out_normals.reshape(
@@ -957,7 +966,8 @@ class MVEdit3DPipeline(StableDiffusionControlNetPipeline):
                         weight=target_w_patch_ / cam_weights_mean
                     ) * patch_normal_weight
                     loss = loss + patch_normal_loss
-                    patch_normal_loss_.append(patch_normal_loss.item())
+                    if debug:
+                        patch_normal_loss_.append(patch_normal_loss.item())
 
                 optimizer.zero_grad()
                 loss.backward()
@@ -980,25 +990,26 @@ class MVEdit3DPipeline(StableDiffusionControlNetPipeline):
                     in_mesh = Mesh(v=mesh_verts, f=mesh_faces, device=device)
                     in_mesh.auto_normal()
 
-            print_str = []
-            for name, loss in zip([
-                    'pixel_rgb_loss',
-                    'patch_rgb_loss',
-                    'alphas_loss',
-                    'lapsmth_loss',
-                    'norm_const_loss',
-                    'normal_reg_loss',
-                    'patch_normal_loss'],
-                    [pixel_rgb_loss_,
-                     patch_rgb_loss_,
-                     alphas_loss_,
-                     lapsmth_loss_,
-                     norm_const_loss_,
-                     normal_reg_loss_,
-                     patch_normal_loss_]):
-                if len(loss) > 0:
-                    print_str.append(f'{name}: {np.mean(loss):.4f}')
-            print('\n' + ', '.join(print_str))
+            if debug:
+                print_str = []
+                for name, loss in zip([
+                        'pixel_rgb_loss',
+                        'patch_rgb_loss',
+                        'alphas_loss',
+                        'lapsmth_loss',
+                        'norm_const_loss',
+                        'normal_reg_loss',
+                        'patch_normal_loss'],
+                        [pixel_rgb_loss_,
+                         patch_rgb_loss_,
+                         alphas_loss_,
+                         lapsmth_loss_,
+                         norm_const_loss_,
+                         normal_reg_loss_,
+                         patch_normal_loss_]):
+                    if len(loss) > 0:
+                        print_str.append(f'{name}: {np.mean(loss):.4f}')
+                print('\n' + ', '.join(print_str))
 
         self.nerf.decoder.train(decoder_training_prev)
 
@@ -1138,7 +1149,8 @@ class MVEdit3DPipeline(StableDiffusionControlNetPipeline):
             dt_gamma_scale: Ray sampler hyperparameter.
             bg_width: Entropy loss hyperparameter.
             ablation_nodiff: Whether to ablate the diffusion model.
-            debug: Whether to save visualizations of `tile_weight`, `blend_weight`, and `depth_weight`.
+            debug: Whether to print loss values and save the visualizations of `tile_weight`, `blend_weight`,
+                and `depth_weight`.
             out_dir: The output directory to save the visualizations.
             save_interval: The interval to save the tiled visualization of each view.
             save_all_interval: The interval to save the full visualization of each view.
@@ -1425,7 +1437,7 @@ class MVEdit3DPipeline(StableDiffusionControlNetPipeline):
                     alpha_soften, normal_reg_weight(progress), entropy_weight(progress),
                     nerf_code, density_grid, density_bitfield,
                     render_size, intrinsics, intrinsics_size, camera_poses, cam_weights, cam_lights, patch_size,
-                    t is None, bg_width, ambient_light, dt_gamma_scale, init_shaded)
+                    t is None, bg_width, ambient_light, dt_gamma_scale, init_shaded, debug=debug)
             else:
                 if not tet_is_init:  # convert to dmtet
                     tet_verts, tet_indices, tet_sdf = init_tet(self.nerf, nerf_code, resolution=tet_resolution)
@@ -1453,7 +1465,7 @@ class MVEdit3DPipeline(StableDiffusionControlNetPipeline):
                     alpha_soften, normal_reg_weight(progress), mesh_normal_reg_weight,
                     nerf_code, tet_verts, deform, tet_sdf, tet_indices, dmtet, in_mesh,
                     render_size, intrinsics, intrinsics_size, camera_poses, cam_weights, lights, patch_size,
-                    progress == 1, ambient_light, mesh_reduction)
+                    progress == 1, ambient_light, mesh_reduction, debug=debug)
 
             # ================= NeRF/mesh rendering =================
             images = []

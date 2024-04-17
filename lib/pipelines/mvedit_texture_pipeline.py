@@ -96,7 +96,7 @@ class MVEditTexturePipeline(MVEdit3DPipeline):
             optimizer, lr, inverse_steps, render_bs, patch_bs,  # optimization settings
             patch_rgb_weight,  # loss weights
             nerf_code, in_mesh,  # mesh model
-            render_size, intrinsics, intrinsics_size, camera_poses, cam_weights_dense, patch_size):
+            render_size, intrinsics, intrinsics_size, camera_poses, cam_weights_dense, patch_size, debug=False):
         device = self.unet.device
 
         decoder_training_prev = self.nerf.decoder.training
@@ -112,8 +112,9 @@ class MVEditTexturePipeline(MVEdit3DPipeline):
             num_pose_batches = len(pose_batches)
             cam_weights_batches = cam_weights_dense[camera_perm].split(render_bs, dim=0)
 
-            pixel_rgb_loss_ = []
-            patch_rgb_loss_ = []
+            if debug:
+                pixel_rgb_loss_ = []
+                patch_rgb_loss_ = []
             for inverse_step_id in range(inverse_steps):
                 pose_batch = pose_batches[inverse_step_id % num_pose_batches]
                 intrinsics_batch = intrinsics_batches[inverse_step_id % num_pose_batches]
@@ -131,7 +132,8 @@ class MVEditTexturePipeline(MVEdit3DPipeline):
                 loss = pixel_rgb_loss = self.nerf.pixel_loss(
                     out_rgbs.reshape(target_rgbs.size()), target_rgbs,
                     weight=target_w) * 2
-                pixel_rgb_loss_.append(pixel_rgb_loss.item())
+                if debug:
+                    pixel_rgb_loss_.append(pixel_rgb_loss.item())
 
                 if patch_rgb_weight > 0:
                     out_rgb_patch = out_rgbs.reshape(
@@ -151,14 +153,16 @@ class MVEditTexturePipeline(MVEdit3DPipeline):
                         weight=target_w_patch_
                     ) * patch_rgb_weight
                     loss = loss + patch_rgb_loss
-                    patch_rgb_loss_.append(patch_rgb_loss.item())
+                    if debug:
+                        patch_rgb_loss_.append(patch_rgb_loss.item())
 
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
 
-            print(f'\npixel_rgb_loss: {np.mean(pixel_rgb_loss_):.4f}, '
-                  f'patch_rgb_loss: {np.mean(patch_rgb_loss_):.4f}')
+            if debug:
+                print(f'\npixel_rgb_loss: {np.mean(pixel_rgb_loss_):.4f}, '
+                      f'patch_rgb_loss: {np.mean(patch_rgb_loss_):.4f}')
 
         self.nerf.decoder.train(decoder_training_prev)
 
@@ -434,7 +438,8 @@ class MVEditTexturePipeline(MVEdit3DPipeline):
                 optimizer, lr_schedule(progress), inverse_steps, render_bs, patch_bs,  # optimization settings
                 patch_rgb_weight(progress),  # loss weights
                 nerf_code, in_mesh,  # mesh model
-                render_size, intrinsics, intrinsics_size, camera_poses, cam_weights_dense, patch_size)
+                render_size, intrinsics, intrinsics_size, camera_poses, cam_weights_dense, patch_size,
+                debug=debug)
 
             # ================= Mesh rendering =================
             images = []
