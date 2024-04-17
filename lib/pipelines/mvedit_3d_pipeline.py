@@ -608,7 +608,7 @@ class MVEdit3DPipeline(StableDiffusionControlNetPipeline):
         def shading_fun(world_pos=None, albedo=None, world_normal=None, fg_mask=None, **kwargs):
             total_num_points = len(world_pos)
             if total_num_points == 0:
-                return albedo
+                return world_pos if albedo is None else albedo
             base_albedo = self.nerf.decoder.point_decode(world_pos[None], None, nerf_code)[1].squeeze(0)
             fg_lights = worldspace_point_lights[fg_mask.squeeze(0)]
             shading = ((fg_lights[:, None, :] @ world_normal[:, :, None]).clamp(min=0)
@@ -624,7 +624,7 @@ class MVEdit3DPipeline(StableDiffusionControlNetPipeline):
         def shading_fun(world_pos=None, albedo=None, **kwargs):
             total_num_points = len(world_pos)
             if total_num_points == 0:
-                return albedo
+                return world_pos if albedo is None else albedo
             return self.nerf.decoder.point_decode(world_pos[None], None, nerf_code)[1].squeeze(0)
         return shading_fun
 
