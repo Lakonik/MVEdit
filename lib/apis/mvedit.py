@@ -227,7 +227,10 @@ class MVEditRunner:
             scheduler_class = scheduler_type
         sampler_class = getattr(diffusers.schedulers, scheduler_class + 'Scheduler')
         if stable_diffusion_checkpoint != self.scheduler_ckpt or scheduler_type != self.scheduler_type:
-            cfg_json = hf_hub_download(repo_id=stable_diffusion_checkpoint, filename='scheduler/scheduler_config.json')
+            cfg_json = hf_hub_download(
+                repo_id=stable_diffusion_checkpoint,
+                filename='scheduler/scheduler_config.json',
+                local_files_only=self.local_files_only)
             with open(cfg_json) as f:
                 cfg = json.load(f)
             for key in ['_use_default_values', '_class_name', 'algorithm_type']:
