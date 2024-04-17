@@ -912,7 +912,7 @@ class MVEditRunner:
         if front_view_id is not None and 0 <= front_view_id < self.preproc_num_views:
             front_azi = front_view_id / self.preproc_num_views * (2 * math.pi)
             camera_azi = torch.atan2(camera_poses[:, 1, 3], camera_poses[:, 0, 3])
-            cam_weights = (vonmises.pdf(front_azi, 0.3, camera_azi.cpu().numpy()) * (2 * math.pi)).tolist()
+            cam_weights = (vonmises.pdf(x=camera_azi.cpu().numpy(), loc=front_azi, kappa=0.3) * (2 * math.pi)).tolist()
             print(f'\nUsing front view id {front_view_id}...')
             print(f'Using camera weights: {cam_weights}')
         else:
