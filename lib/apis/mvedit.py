@@ -56,7 +56,7 @@ def _api_wrapper(func):
 
 class MVEditRunner:
     def __init__(self, device, local_files_only=False, empty_cache=True, unload_models=True, dtype=torch.bfloat16,
-                 out_dir=None, save_interval=None, debug=False, no_safe=False):
+                 out_dir=None, save_interval=None, save_all_interval=None, debug=False, no_safe=False):
         self.local_files_only = local_files_only
         self.empty_cache = empty_cache
         self.unload_models = unload_models
@@ -68,6 +68,7 @@ class MVEditRunner:
         else:
             self.out_dir_3d = self.out_dir_superres = self.out_dir_tex = None
         self.save_interval = save_interval
+        self.save_all_interval = save_all_interval
         self.debug = debug
 
         print('\nInitializing modules...')
@@ -475,7 +476,7 @@ class MVEditRunner:
             prog_bar=gr.Progress().tqdm,
             out_dir=self.out_dir_3d,
             save_interval=self.save_interval,
-            save_all_interval=self.save_interval,
+            save_all_interval=self.save_all_interval,
             mesh_reduction=128 / nerf_mesh_kwargs['tet_resolution'],
             max_num_views=partial(
                 default_max_num_views,
@@ -549,7 +550,7 @@ class MVEditRunner:
             prog_bar=gr.Progress().tqdm,
             out_dir=self.out_dir_superres,
             save_interval=self.save_interval,
-            save_all_interval=self.save_interval,
+            save_all_interval=self.save_all_interval,
             force_auto_uv=base_kwargs.get('force_auto_uv', False),
             debug=self.debug,
             **kwargs
@@ -563,10 +564,10 @@ class MVEditRunner:
             cam_weights=None, keep_views=None, ip_adapter=None,
             use_reference=False):
         print(retex_kwargs)
-        if self.out_dir_3d is not None:
-            if os.path.exists(self.out_dir_3d):
-                shutil.rmtree(self.out_dir_3d)
-            os.makedirs(self.out_dir_3d)
+        if self.out_dir_tex is not None:
+            if os.path.exists(self.out_dir_tex):
+                shutil.rmtree(self.out_dir_tex)
+            os.makedirs(self.out_dir_tex)
         set_random_seed(seed, deterministic=True)
         aux_len = len(aux_camera_poses) if aux_camera_poses is not None else 0
         prompts = retex_kwargs['prompt'] if front_azi is None \
@@ -604,7 +605,7 @@ class MVEditRunner:
             prog_bar=gr.Progress().tqdm,
             out_dir=self.out_dir_tex,
             save_interval=self.save_interval,
-            save_all_interval=self.save_interval,
+            save_all_interval=self.save_all_interval,
             force_auto_uv=retex_kwargs['force_auto_uv'],
             max_num_views=partial(
                 default_max_num_views_texture,

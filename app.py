@@ -21,11 +21,18 @@ from lib.core.mvedit_webui.tab_stablessdnerf_to_3d import create_interface_stabl
 from lib.apis.mvedit import MVEditRunner
 
 
+DEBUG_SAVE_INTERVAL = {
+    0: None,
+    1: 4,
+    2: 1}
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description='MVEdit 3D Toolbox')
     parser.add_argument('--diff-bs', type=int, default=4, help='Diffusion batch size')
     parser.add_argument('--advanced', action='store_true', help='Show advanced settings')
-    parser.add_argument('--debug', action='store_true', help='Save debug images to ./viz')
+    parser.add_argument('--debug', choices=[0, 1, 2], type=int, default=0,
+                        help='Debug mode - 0: off, 1: on, 2: verbose (visualize everything)')
     parser.add_argument('--local-files-only', action='store_true',
                         help='Only load local model weights and configuration files')
     parser.add_argument('--no-safe', action='store_true', help='Disable safety checker to free VRAM')
@@ -50,10 +57,11 @@ def main():
         device=torch.device('cuda'),
         local_files_only=args.local_files_only,
         unload_models=args.unload_models,
-        out_dir=osp.join(osp.dirname(__file__), 'viz') if args.debug else None,
-        save_interval=1 if args.debug else None,
+        out_dir=osp.join(osp.dirname(__file__), 'viz') if args.debug > 0 else None,
+        save_interval=DEBUG_SAVE_INTERVAL[args.debug],
+        save_all_interval=1 if DEBUG_SAVE_INTERVAL[args.debug] == 2 else None,
         dtype=torch.bfloat16 if args.bf16 else torch.float16,
-        debug=args.debug,
+        debug=args.debug > 0,
         no_safe=args.no_safe
     )
 
@@ -254,7 +262,7 @@ def main():
             )
 
         demo.queue().launch(
-            share=args.share, debug=args.debug
+            share=args.share, debug=args.debug > 0
         )
 
 
