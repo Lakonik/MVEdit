@@ -25,13 +25,15 @@ https://github.com/Lakonik/MVEdit/assets/53893837/062a0622-47f8-4068-b478-aa4a80
 - [x] Release the complete codebase, including the Web UI that can be deployed on your own machine
 - [ ] Add non-Gradio scripts and instructions
 
+This project is a WIP. New models with better quality may be added in the future.
+
 ## Installation
 
 The code has been tested in the environment described as follows:
 
-- Linux (tested on Ubuntu 20 & 22)
-- [CUDA Toolkit](https://developer.nvidia.com/cuda-toolkit-archive) 12
-- [PyTorch](https://pytorch.org/get-started/previous-versions/) 2.1.2
+- Linux (tested on Ubuntu 20 and above)
+- [CUDA Toolkit](https://developer.nvidia.com/cuda-toolkit-archive) 11.8 and above
+- [PyTorch](https://pytorch.org/get-started/previous-versions/) 2.1 and above
 - FFmpeg, x264 (optional, for exporting videos)
 
 Other dependencies can be installed via `pip install -r requirements.txt`. 
@@ -139,19 +141,6 @@ for img_name in tqdm.tqdm(os.listdir(in_dir)):
 ### Direct Pipeline Usage
 
 Instructions for advanced usage of MVEdit pipelines will be added soon.
-
-## Known Issues
-
-The Web UI has CPU memory leaks (presumably a Gradio issue). Avoiding frequent switching between mutliple tabs in the Web UI may alleviate the issue.
-
-If you deploy the Web UI on your own server and encounter the memory leak issue, a temporary workaround is to restart the Web UI after it's killed using a while loop:
-
-```bash
-while (true) do
-    echo starting...
-    python app.py --empty-cache --unload-models
-done
-```
 
 ## Acknowledgements
 

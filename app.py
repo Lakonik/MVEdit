@@ -19,6 +19,7 @@ from lib.core.mvedit_webui.tab_retexturing import create_interface_retexturing
 from lib.core.mvedit_webui.tab_3d_to_video import create_interface_3d_to_video
 from lib.core.mvedit_webui.tab_stablessdnerf_to_3d import create_interface_stablessdnerf_to_3d
 from lib.apis.mvedit import MVEditRunner
+from lib.version import __version__
 
 
 DEBUG_SAVE_INTERVAL = {
@@ -69,7 +70,7 @@ def main():
                    title='MVEdit 3D Toolbox',
                    css='lib/core/mvedit_webui/style.css'
                    ) as demo:
-        md_txt = '# MVEdit 3D Toolbox' \
+        md_txt = '# MVEdit 3D Toolbox v' + __version__ + \
                  '\n\nOfficial demo of the paper [Generic 3D Diffusion Adapter Using Controlled Multi-View Editing](https://lakonik.github.io/mvedit).' \
                  '<br>The generation process is stochastic so the results vary between runs. ' \
                  'Try multiple runs if you find the result unsatisfactory.' \
