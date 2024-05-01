@@ -60,7 +60,7 @@ git clone https://github.com/Lakonik/MVEdit && cd MVEdit
 pip install -r requirements.txt
 ```
 
-This codebase may work on Windows systems, but it has not been tested extensively.
+This codebase also works on Windows systems, but it has not been tested extensively. Please refer to [Issue #8](https://github.com/Lakonik/MVEdit/issues/8) for more information about the environment setup on Windows.
 
 ## Usage
 
