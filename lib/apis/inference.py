@@ -2,10 +2,10 @@ import torch
 import torch.nn.functional as F
 import mmcv
 
-from mmcv.runner import load_checkpoint
 from mmgen.models import build_model
 from mmgen.models.architectures.common import get_module_device
 
+from lib.runner.checkpoints import load_checkpoint
 from lib.runner.hooks.ema_hook import get_ori_key
 
 
@@ -25,7 +25,7 @@ def init_model(
 
     if ema_only:
         module_keys = []
-        for hook in config['custom_hooks']:
+        for hook in config.get('custom_hooks', []):
             if hook['type'] in ('ExponentialMovingAverageHookMod', 'ExponentialMovingAverageHook'):
                 if isinstance(hook['module_keys'], str):
                     module_keys.append(hook['module_keys'])
@@ -36,7 +36,7 @@ def init_model(
             del model._modules[ori_key]
 
     if checkpoint is not None:
-        load_checkpoint(model, checkpoint, map_location='cpu')
+        load_checkpoint(model, checkpoint, map_location='cpu', convert_dtype=use_fp16 or use_bf16)
 
     model._cfg = config  # save the config in the model for convenience
 

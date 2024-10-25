@@ -14,13 +14,15 @@ class UniformTimeStepSamplerMod(UniformTimeStepSampler):
 class SNRWeightedTimeStepSampler(UniformTimeStepSampler):
     def __init__(self,
                  num_timesteps, mean, std, mode,
-                 power=1, min=-1, max=-1, bias=0, prob_power=0.0):
+                 power=1, power_2=0, min=-1, max=-1, bias=0, prob_power=0.0, data_noise=0.0):
         super(UniformTimeStepSampler, self).__init__()
         self.num_timesteps = num_timesteps
         self.power = power
+        self.power_2 = power_2
+        self.data_noise = data_noise
 
-        sqrt_snr = mean / std
-        weight_x = sqrt_snr ** (2 * power) + bias
+        snr = (mean / std) ** 2
+        weight_x = snr ** (power + power_2) / (1 + data_noise * snr) ** power + bias
 
         if min > 0:
             weight_x = weight_x.clip(min=min)

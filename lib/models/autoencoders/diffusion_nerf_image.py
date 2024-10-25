@@ -89,7 +89,7 @@ class DiffusionNeRFImage(DiffusionNeRF):
             # prompts = ['' if uncond else prompt for uncond, prompt in zip(uncond_mask, prompts)]
         
         # TODO: remove magic numbers somewhere else, maybe into config
-        # self.encoder: LDMEncoder
+        # self.encoder: PretrainedVAEEncoder
         with torch.no_grad():
             aux_depth = self.depth_aux(extra_cond_img / 0.6)
             extra_cond_img = torch.cat([aux_depth, extra_cond_img], dim=1)  # B[H]WC

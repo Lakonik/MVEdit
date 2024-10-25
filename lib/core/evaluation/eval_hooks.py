@@ -46,8 +46,7 @@ class GenerativeEvalHook3D(GenerativeEvalHook):
         if rank == 0:
             sys.stdout.write('\n')
             for metric in self.metrics:
-                with torch.no_grad():
-                    metric.summary()
+                metric.summary()
                 for name, val in metric._result_dict.items():
                     runner.log_buffer.output[self.data + '_' + name] = val
                     # record best metric and save the best ckpt

@@ -1,3 +1,4 @@
+import traceback
 import numpy as np
 import PIL
 import torch
@@ -13,25 +14,22 @@ from diffusers import AutoencoderKL, UNet2DConditionModel, StableDiffusionContro
 from diffusers.models import ControlNetModel
 from diffusers.pipelines.controlnet import MultiControlNetModel
 from diffusers.schedulers import KarrasDiffusionSchedulers
+from mmgen.models.architectures.common import get_module_device
 
 from lib.core import get_noise_scales
 from lib.models.autoencoders.base_nerf import BaseNeRF
-from lib.models.autoencoders.base_mesh import Mesh
-from lib.models.decoders.base_mesh_renderer import MeshRenderer
+from lib.models.decoders.mesh_renderer.mesh_utils import Mesh
+from lib.models.decoders.mesh_renderer.base_mesh_renderer import MeshRenderer
 from lib.models.architecture.ip_adapter import IPAdapter
-from lib.models.architecture.joint_attn import apply_cross_image_attn_proc
-from .mvedit_texture_pipeline import MVEditTexturePipeline, default_depth_weight, join_prompts, \
-    default_blend_weight, default_lr_schedule, default_patch_rgb_weight, plot_weights, normalize_depth, \
-    camera_dense_weighting
-
-
-def default_tile_weight(t):
-    return torch.ones_like(t)
+from lib.models.architecture.joint_attn import apply_cross_image_attn_proc, remove_cross_image_attn_proc
+from .mvedit_texture_pipeline import MVEditTexturePipeline, join_prompts, \
+    default_patch_rgb_weight, normalize_depth, camera_dense_weighting
+from lib.ops.edge_dilation import edge_dilation
 
 
 class MVEditTextureSuperResPipeline(MVEditTexturePipeline):
 
-    _optional_components = []
+    _optional_components = ['vae', 'text_encoder', 'tokenizer', 'unet', 'controlnet', 'scheduler']
 
     def __init__(
             self,
@@ -44,8 +42,9 @@ class MVEditTextureSuperResPipeline(MVEditTexturePipeline):
             nerf: BaseNeRF,
             mesh_renderer: MeshRenderer):
         super(StableDiffusionControlNetPipeline, self).__init__()
-        assert isinstance(controlnet, (list, tuple))
-        controlnet = MultiControlNetModel(controlnet)
+        if controlnet is not None:
+            assert isinstance(controlnet, (list, tuple))
+            controlnet = MultiControlNetModel(controlnet)
         self.register_modules(
             vae=vae,
             text_encoder=text_encoder,
@@ -58,7 +57,6 @@ class MVEditTextureSuperResPipeline(MVEditTexturePipeline):
         self.clip_img_size = 224
         self.clip_img_mean = [0.48145466, 0.4578275, 0.40821073]
         self.clip_img_std = [0.26862954, 0.26130258, 0.27577711]
-        self.cross_image_attn_enabled = False
         self.bg_color = 0.5
 
     def get_prompt_embeds(self, in_images, rgb_prompt, rgb_negative_prompt, ip_adapter=None,
@@ -93,8 +91,9 @@ class MVEditTextureSuperResPipeline(MVEditTexturePipeline):
             optimizer, lr, inverse_steps, render_bs, patch_bs,  # optimization settings
             patch_rgb_weight,  # loss weights
             nerf_code, in_mesh,  # mesh model
-            render_size, intrinsics, intrinsics_size, camera_poses, cam_weights_dense, patch_size, debug=False):
-        device = self.unet.device
+            render_size, intrinsics, intrinsics_size, camera_poses, cam_weights_dense, patch_size,
+            debug=False, perturb=True):
+        device = get_module_device(self.nerf)
 
         decoder_training_prev = self.nerf.decoder.training
         self.nerf.decoder.train(True)
@@ -118,10 +117,15 @@ class MVEditTextureSuperResPipeline(MVEditTexturePipeline):
                 target_rgbs = tgt_image_batches[inverse_step_id % num_pose_batches]
                 target_w = cam_weights_batches[inverse_step_id % num_pose_batches]
 
+                intrinsics_batch = intrinsics_batch * (render_size / intrinsics_size)
+                if perturb:
+                    intrinsics_batch[:, 2:] += (torch.rand_like(
+                        intrinsics_batch[:, 2:]) - 0.5) / self.mesh_renderer.ssaa
+
                 render_out = self.mesh_renderer(
                     [in_mesh],
                     pose_batch[None],
-                    intrinsics_batch[None] * (render_size / intrinsics_size),
+                    intrinsics_batch[None],
                     render_size, render_size,
                     self.make_nerf_albedo_shading_fun(nerf_code))
                 out_rgbs = (render_out['rgba'][..., :3]
@@ -170,6 +174,7 @@ class MVEditTextureSuperResPipeline(MVEditTexturePipeline):
             negative_prompt: Union[str, List[str]] = '',
             in_model: Optional[Union[str, Mesh]] = None,
             ingp_states: Optional[Dict] = None,
+            init_images: Optional[List[PIL.Image.Image]] = None,
             cond_images: Optional[List[PIL.Image.Image]] = None,
             extra_control_images: Optional[List[List[PIL.Image.Image]]] = None,
             nerf_code: Optional[torch.tensor] = None,
@@ -183,19 +188,17 @@ class MVEditTextureSuperResPipeline(MVEditTexturePipeline):
             guidance_scale: float = 7,
             num_inference_steps: int = 26,
             denoising_strength: Optional[float] = 0.5,
+            diff_size: int = 512,
             patch_size: int = 512,
             patch_bs: int = 1,
             diff_bs: int = 12,
             render_bs: int = 8,
-            n_inverse_steps: int = 64,
+            n_inverse_steps: int = 512,
             ip_adapter: Optional[IPAdapter] = None,
             ip_adapter_use_cond_idx: Optional[list] = None,
-            tile_weight: Callable = default_tile_weight,
-            depth_weight: Callable = default_depth_weight,
-            blend_weight: Callable = default_blend_weight,
-            lr_schedule: Callable = default_lr_schedule,
+            lr: float = 0.01,
             patch_rgb_weight: Callable = default_patch_rgb_weight,
-            ablation_nodiff: bool = False,
+            optim_only: bool = False,
             debug: bool = False,
             out_dir: Optional[str] = None,
             save_interval: Optional[int] = None,
@@ -203,136 +206,150 @@ class MVEditTextureSuperResPipeline(MVEditTexturePipeline):
             default_prompt='best quality, sharp focus, photorealistic, extremely detailed',
             default_neg_prompt='worst quality, low quality, depth of field, blurry, out of focus, low-res, '
                                'illustration, painting, drawing',
-            force_auto_uv=False,
-            map_size=2048,
+            bake_texture_kwargs: Optional[Dict] = None,
             prog_bar=tqdm):
-
-        if not self.cross_image_attn_enabled:
+        if not optim_only:
             apply_cross_image_attn_proc(self.unet)
-            self.cross_image_attn_enabled = True
 
-        device = self.unet.device
+        device = get_module_device(self.nerf)
+        nn_dtype = torch.float32 if self.unet is None else self.unet.dtype
         torch.set_grad_enabled(False)
 
-        render_size = 512
+        render_size = diff_size
+        patch_size = (render_size // round(render_size / patch_size))  # make sure patch_size divides render_size
 
         # ================= Initialize texture field =================
-        if self.nerf.decoder.state_dict_bak is None:
+        if self.nerf.decoder.state_dict_bak is None:  # 1st run
             self.nerf.decoder.backup_state_dict()
-        if ingp_states is not None:
-            self.nerf.decoder.load_state_dict(
-                ingp_states if isinstance(ingp_states, dict) else
-                torch.load(ingp_states, map_location='cpu'), strict=False)
 
-        # ================= Pre-process inputs =================
-        if debug:
-            plot_weights(tile_weight, blend_weight, depth_weight, out_dir)
+        try:
+            if ingp_states is not None:
+                self.nerf.decoder.load_state_dict(
+                    ingp_states if isinstance(ingp_states, dict) else
+                    torch.load(ingp_states, map_location='cpu'), strict=False)
 
-        if isinstance(camera_poses, torch.Tensor):
-            camera_poses = camera_poses.to(device=device, dtype=torch.float32)
-        else:
-            camera_poses = torch.from_numpy(np.stack(camera_poses, axis=0)).to(device=device, dtype=torch.float32)
-        num_cameras = len(camera_poses)
-
-        if reg_camera_poses is not None:
-            if isinstance(reg_camera_poses, torch.Tensor):
-                reg_camera_poses = reg_camera_poses.to(device=device, dtype=torch.float32)
+            # ================= Pre-process inputs =================
+            if isinstance(camera_poses, torch.Tensor):
+                camera_poses = camera_poses.to(device=device, dtype=torch.float32)
             else:
-                reg_camera_poses = torch.from_numpy(np.stack(reg_camera_poses, axis=0)).to(
-                    device=device, dtype=torch.float32)
-        else:
-            reg_camera_poses = camera_poses.new_zeros((0, 3, 4))
-        num_reg_cameras = len(reg_camera_poses)
+                camera_poses = torch.from_numpy(np.stack(camera_poses, axis=0)).to(device=device, dtype=torch.float32)
+            num_cameras = len(camera_poses)
 
-        all_camera_poses = torch.cat([camera_poses, reg_camera_poses], dim=0)
-        num_all_cameras = len(all_camera_poses)
-
-        if intrinsics.dim() == 1:
-            intrinsics = intrinsics[None].expand(num_all_cameras, -1)
-
-        assert in_model is not None
-        in_mesh, images, alphas, depths = self.load_init_mesh(
-            in_model, all_camera_poses, intrinsics, intrinsics_size, render_bs,
-            None if ingp_states is None else self.make_nerf_albedo_shading_fun(nerf_code))
-        in_images = images[:num_cameras].permute(0, 3, 1, 2).to(dtype=self.unet.dtype)
-        reg_images = images[num_cameras:]
-        ctrl_images = in_images
-        ctrl_depths = normalize_depth(depths[:num_cameras], alphas[:num_cameras]).to(
-            self.unet.dtype).unsqueeze(1).repeat(1, 3, 1, 1)
-
-        if cam_weights is None:
-            cam_weights = [1.0] * num_cameras
-        if reg_cam_weights is None:
-            reg_cam_weights = [0.5] * num_reg_cameras
-        cam_weights = camera_poses.new_tensor(cam_weights + reg_cam_weights)
-        cam_weights_dense = cam_weights[:, None, None, None] * camera_dense_weighting(
-            intrinsics, intrinsics_size, render_size, alphas, depths)
-
-        if not isinstance(prompt, list):
-            prompt = [prompt] * num_cameras
-        if not isinstance(negative_prompt, list):
-            negative_prompt = [negative_prompt] * num_cameras
-
-        cond_images, extra_control_images = self.load_cond_images(in_images, cond_images, extra_control_images)
-
-        rgb_prompt = [join_prompts(prompt_single, default_prompt) for prompt_single in prompt]
-        rgb_negative_prompt = [join_prompts(negative_prompt_single, default_neg_prompt)
-                               for negative_prompt_single in negative_prompt]
-
-        # ================= Initialize scheduler =================
-        betas = self.scheduler.betas.cpu().numpy()
-        alphas = 1.0 - betas
-        alphas_bar = np.cumproduct(alphas, axis=0)
-
-        self.scheduler.set_timesteps(num_inference_steps, device=device)
-        timesteps = self.scheduler.timesteps
-        if denoising_strength is not None:
-            timesteps = timesteps[min(
-                int(round(len(timesteps) * (1 - denoising_strength) / self.scheduler.order)) * self.scheduler.order,
-                len(timesteps) - 1):]
-        print(f"Timesteps = {timesteps}")
-
-        # ================= Initilize embeds and latents =================
-        if not ablation_nodiff:  # for ip_adapter and cross_image_attn, in_images are used when cond_images is None
-            prompt_embeds = self.get_prompt_embeds(
-                in_images, rgb_prompt, rgb_negative_prompt, ip_adapter=ip_adapter,
-                ip_adapter_use_cond_idx=ip_adapter_use_cond_idx, cond_images=cond_images)
-
-            init_latents = []
-            for in_images_batch in in_images.split(diff_bs, dim=0):
-                init_latents.append(self.vae.encode(
-                    in_images_batch * 2 - 1).latent_dist.sample() * self.vae.config.scaling_factor)
-            init_latents = torch.cat(init_latents, dim=0)
-            if use_reference:
-                if cond_images is None:
-                    ref_latents = init_latents
+            if reg_camera_poses is not None:
+                if isinstance(reg_camera_poses, torch.Tensor):
+                    reg_camera_poses = reg_camera_poses.to(device=device, dtype=torch.float32)
                 else:
-                    ref_images = []
-                    for cond_image in cond_images:
-                        ref_images.append(F.interpolate(cond_image, size=(512, 512), mode='bilinear'))
-                    ref_images = torch.cat(ref_images, dim=0)
-                    ref_latents = []
-                    for ref_images_batch in ref_images.split(diff_bs, dim=0):
-                        ref_latents.append(self.vae.encode(
-                            ref_images_batch * 2 - 1).latent_dist.sample() * self.vae.config.scaling_factor)
-                    ref_latents = torch.cat(ref_latents, dim=0)
+                    reg_camera_poses = torch.from_numpy(np.stack(reg_camera_poses, axis=0)).to(
+                        device=device, dtype=torch.float32)
             else:
-                ref_latents = None
+                reg_camera_poses = camera_poses.new_zeros((0, 3, 4))
+            num_reg_cameras = len(reg_camera_poses)
 
-        optimizer = torch.optim.Adam(self.nerf.decoder.parameters(), lr=0.01)
-        if nerf_code is None:
-            nerf_code = [None]
+            all_camera_poses = torch.cat([camera_poses, reg_camera_poses], dim=0)
+            num_all_cameras = len(all_camera_poses)
 
-        # ================= Ancestral sampling loop =================
-        for i, t in enumerate(prog_bar([None] + list(timesteps))):
-            progress = i / len(timesteps)
+            if intrinsics.dim() == 1:
+                intrinsics = intrinsics[None].expand(num_all_cameras, -1)
 
-            if t is not None:
-                # ================= Denoising step =================
-                if not ablation_nodiff:
+            assert in_model is not None
+            in_mesh, images, alphas, depths = self.load_init_mesh(
+                in_model, all_camera_poses, intrinsics, intrinsics_size, render_bs,
+                None if ingp_states is None else self.make_nerf_albedo_shading_fun(nerf_code), diff_size=diff_size)
+            if init_images is None:
+                in_images = images[:num_cameras].permute(0, 3, 1, 2).to(dtype=nn_dtype)
+                reg_images = images[num_cameras:]
+            else:
+                init_images = self.load_init_images(init_images, ret_masks=False)[0]
+                in_images = init_images[:num_cameras]
+                reg_images = init_images[num_cameras:].permute(0, 2, 3, 1).to(dtype=torch.float32)
+            ctrl_images = in_images
+            ctrl_depths = normalize_depth(depths[:num_cameras], alphas[:num_cameras]).to(
+                nn_dtype).unsqueeze(1).repeat(1, 3, 1, 1)
+
+            if cam_weights is None:
+                cam_weights = [1.0] * num_cameras
+            if reg_cam_weights is None:
+                reg_cam_weights = [0.5] * num_reg_cameras
+            cam_weights = camera_poses.new_tensor(cam_weights + reg_cam_weights)
+            cam_weights_dense = cam_weights[:, None, None, None] * camera_dense_weighting(
+                intrinsics, intrinsics_size, render_size, alphas, depths)
+
+            if not isinstance(prompt, list):
+                prompt = [prompt] * num_cameras
+            if not isinstance(negative_prompt, list):
+                negative_prompt = [negative_prompt] * num_cameras
+
+            cond_images, extra_control_images = self.load_cond_images(in_images, cond_images, extra_control_images)
+
+            rgb_prompt = [join_prompts(prompt_single, default_prompt) for prompt_single in prompt]
+            rgb_negative_prompt = [join_prompts(negative_prompt_single, default_neg_prompt)
+                                   for negative_prompt_single in negative_prompt]
+
+            if not optim_only:
+                # ================= Initialize scheduler =================
+                betas = self.scheduler.betas.cpu().numpy()
+                alphas = 1.0 - betas
+                alphas_bar = np.cumproduct(alphas, axis=0)
+
+                self.scheduler.set_timesteps(num_inference_steps, device=device)
+                timesteps = self.scheduler.timesteps
+                if denoising_strength is not None:
+                    timesteps = timesteps[min(
+                        int(round(len(timesteps) * (1 - denoising_strength) / self.scheduler.order)) * self.scheduler.order,
+                        len(timesteps) - 1):]
+                print(f"Timesteps = {timesteps}")
+
+                # ================= Initilize embeds and latents =================
+                prompt_embeds = self.get_prompt_embeds(
+                    in_images, rgb_prompt, rgb_negative_prompt, ip_adapter=ip_adapter,
+                    ip_adapter_use_cond_idx=ip_adapter_use_cond_idx, cond_images=cond_images)
+
+                init_latents = []
+                for in_images_batch in in_images.split(diff_bs, dim=0):
+                    init_latents.append(self.vae.encode(
+                        in_images_batch * 2 - 1).latent_dist.sample() * self.vae.config.scaling_factor)
+                init_latents = torch.cat(init_latents, dim=0)
+                if use_reference:
+                    if cond_images is None:
+                        ref_latents = init_latents
+                    else:
+                        ref_images = []
+                        for cond_image in cond_images:
+                            ref_images.append(F.interpolate(cond_image, size=(diff_size, diff_size), mode='bilinear'))
+                        ref_images = torch.cat(ref_images, dim=0)
+                        ref_latents = []
+                        for ref_images_batch in ref_images.split(diff_bs, dim=0):
+                            ref_latents.append(self.vae.encode(
+                                ref_images_batch * 2 - 1).latent_dist.sample() * self.vae.config.scaling_factor)
+                        ref_latents = torch.cat(ref_latents, dim=0)
+                else:
+                    ref_latents = None
+
+                latent_size = init_latents.size(-1)
+
+            optimizer = torch.optim.Adam(self.nerf.decoder.parameters(), lr=0.01)
+            if nerf_code is None:
+                nerf_code = [None]
+
+            total_steps = num_inference_steps if optim_only else len(timesteps)
+
+            # ================= Main sampling loop =================
+            for i, t in enumerate(prog_bar([None] * (num_inference_steps + 1) if optim_only else [None] + list(timesteps))):
+                progress = i / total_steps
+
+                do_save = save_interval is not None and (i % save_interval == 0 or i == total_steps)
+                do_save_all = save_all_interval is not None and (i % save_all_interval == 0 or i == total_steps)
+
+                # ================= Denoising step P1 =================
+                if not optim_only:
+                    sqrt_alpha_bar_t, sqrt_one_minus_alpha_bar_t = get_noise_scales(
+                        alphas_bar, timesteps[0] if t is None else t,
+                        self.scheduler.num_train_timesteps, dtype=nn_dtype)
+
+                if t is not None and not optim_only:
                     latents_scaled = self.scheduler.scale_model_input(latents, t)
                     if use_reference:
-                        latent_batches = latents_scaled[:, :, -64:].split(diff_bs, dim=0) \
+                        latent_batches = latents_scaled[:, :, -latent_size:].split(diff_bs, dim=0) \
                                          + latents_scaled.split(diff_bs, dim=0)
                         prompt_embeds_batches = prompt_embeds[:num_cameras].split(diff_bs, dim=0) \
                                                 + prompt_embeds[-num_cameras:].split(diff_bs, dim=0)
@@ -350,52 +367,49 @@ class MVEditTextureSuperResPipeline(MVEditTexturePipeline):
 
                     noise_pred = self.get_noise_pred(
                         latent_batches, prompt_embeds_batches, ctrl_images_batches, ctrl_depths_batches,
-                        t, progress, tile_weight, depth_weight, guidance_scale,
-                        extra_control_batches=extra_control_batches)
+                        t, 1.0, 1.0, guidance_scale, extra_control_batches=extra_control_batches)
 
-                    sqrt_alpha_bar_t, sqrt_one_minus_alpha_bar_t = get_noise_scales(
-                        alphas_bar, t, self.scheduler.num_train_timesteps, dtype=noise_pred.dtype)
-                    pred_original_sample = (
-                        (latents_scaled[:, :, -64:] - sqrt_one_minus_alpha_bar_t * noise_pred)
-                        / sqrt_alpha_bar_t).to(noise_pred)
+                    if i == total_steps or do_save or do_save_all:
+                        pred_original_sample = (
+                            (latents_scaled[:, :, -latent_size:] - sqrt_one_minus_alpha_bar_t * noise_pred)
+                            / sqrt_alpha_bar_t).to(noise_pred)
 
-                    tgt_images = []
-                    for batch_pred_original_sample in pred_original_sample.split(diff_bs, dim=0):
-                        tgt_images.append(self.vae.decode(
-                            batch_pred_original_sample / self.vae.config.scaling_factor, return_dict=False)[0])
-                    tgt_images = torch.cat(tgt_images)
-                    tgt_images = (tgt_images / 2 + 0.5).clamp(min=0, max=1).permute(0, 2, 3, 1)
+                        tgt_images = []
+                        for batch_pred_original_sample in pred_original_sample.split(diff_bs, dim=0):
+                            tgt_images.append(self.vae.decode(
+                                batch_pred_original_sample / self.vae.config.scaling_factor, return_dict=False)[0])
+                        tgt_images = torch.cat(tgt_images)
+                        tgt_images = (tgt_images / 2 + 0.5).clamp(min=0, max=1).permute(0, 2, 3, 1)
 
-                    tgt_images = tgt_images[None].to(torch.float32)
+                        tgt_images = tgt_images[None].to(torch.float32)
 
-                    if save_all_interval is not None and (i % save_all_interval == 0 or i == len(timesteps)):
+                    if do_save_all:
                         self.save_all_viz(out_dir, i, num_cameras, tgt_images, latents_scaled,
                                           ctrl_images, diff_bs=diff_bs)
 
                 else:
-                    tgt_images = in_images.permute(0, 2, 3, 1)[None].to(torch.float32)
-                    if save_all_interval is not None:
-                        self.save_all_viz(out_dir, i, num_cameras, tgt_images, diff_bs=diff_bs)
+                    if i == total_steps or do_save or do_save_all:
+                        tgt_images = in_images.permute(0, 2, 3, 1)[None].to(torch.float32)
 
-                tgt_images = torch.cat([tgt_images, reg_images[None].to(torch.float32)], dim=1)
+                if i == total_steps or do_save or do_save_all:
+                    tgt_images = torch.cat([tgt_images, reg_images[None].to(torch.float32)], dim=1)
 
                 # ================= Texture optimization =================
-                self.texture_optim(
-                    tgt_images, num_cameras,  # input images
-                    optimizer, lr_schedule(progress), n_inverse_steps, render_bs, patch_bs,  # optimization settings
-                    patch_rgb_weight(progress),  # loss weights
-                    nerf_code, in_mesh,  # mesh model
-                    render_size, intrinsics, intrinsics_size, all_camera_poses, cam_weights_dense, patch_size,
-                    debug=debug)
+                if i == total_steps:  # optimization only for the final step
+                    torch.cuda.empty_cache()
+                    self.texture_optim(
+                        tgt_images, num_cameras,  # input images
+                        optimizer, lr, n_inverse_steps, render_bs, patch_bs,  # optimization settings
+                        patch_rgb_weight(progress),  # loss weights
+                        nerf_code, in_mesh,  # mesh model
+                        render_size, intrinsics, intrinsics_size, all_camera_poses, cam_weights_dense, patch_size,
+                        debug=debug)
 
-                # ================= Mesh rendering and Solver step =================
-                blend_weight_t = blend_weight(timesteps[0] if t is None else t)
-
-                if blend_weight_t > 0 or (
-                        save_interval is not None and (i % save_interval == 0 or i == len(timesteps))):
+                # ================= Mesh rendering =================
+                if do_save or do_save_all:
                     images = []
                     for pose_batch, intrinsics_batch in zip(
-                            camera_poses.split(render_bs, dim=0), intrinsics.split(render_bs, dim=0)):
+                            camera_poses.split(render_bs, dim=0), intrinsics[:num_cameras].split(render_bs, dim=0)):
                         render_out = self.mesh_renderer(
                             [in_mesh],
                             pose_batch[None],
@@ -405,55 +419,78 @@ class MVEditTextureSuperResPipeline(MVEditTexturePipeline):
                         images.append((render_out['rgba'][..., :3]
                                        + self.bg_color * (1 - render_out['rgba'][..., 3:])).squeeze(0))
 
-                    images = torch.cat(images, dim=0).to(self.unet.dtype).permute(0, 3, 1, 2).clamp(min=0, max=1)
+                    images = torch.cat(images, dim=0).to(nn_dtype).permute(0, 3, 1, 2).clamp(min=0, max=1)
 
-                if save_interval is not None and (i % save_interval == 0 or i == len(timesteps)):
-                    self.save_tiled_viz(out_dir, i, images, tgt_images)
+                    if do_save:
+                        self.save_tiled_viz(out_dir, i, images, tgt_images)
 
-                if ablation_nodiff:
-                    continue
+                if i < total_steps:  # not the final step
+                    # ================= Solver step =================
+                    if optim_only:
+                        continue
 
-                if blend_weight_t > 0:
-                    pred_nerf_sample = []
-                    for batch_images in images.split(diff_bs, dim=0):
-                        pred_nerf_sample.append(self.vae.encode(
-                            batch_images * 2 - 1, return_dict=False)[0].mean * self.vae.config.scaling_factor)
-                    pred_nerf_sample = torch.cat(pred_nerf_sample, dim=0)
-                    pred_nerf_noise = (latents_scaled[:, :, -64:] - pred_nerf_sample * sqrt_alpha_bar_t
-                                       ) / sqrt_one_minus_alpha_bar_t
-                    merged_noise = pred_nerf_noise * blend_weight_t + noise_pred * (1 - blend_weight_t)
-                else:
-                    merged_noise = noise_pred
-                if use_reference:
-                    ref_noise = (latents_scaled[:, :, :64] - ref_latents * sqrt_alpha_bar_t
-                                 ) / sqrt_one_minus_alpha_bar_t
-                    merged_noise = torch.cat([ref_noise, merged_noise], dim=2)
-                latents = self.scheduler.step(merged_noise, t, latents, return_dict=False)[0]
+                    if t is not None:
+                        merged_noise = noise_pred
+                        if use_reference:
+                            ref_noise = (latents_scaled[:, :, :latent_size] - ref_latents * sqrt_alpha_bar_t
+                                         ) / sqrt_one_minus_alpha_bar_t
+                            merged_noise = torch.cat([ref_noise, merged_noise], dim=2)
+                        latents = self.scheduler.step(merged_noise, t, latents, return_dict=False)[0]
 
-            else:
-                if save_interval is not None and (i % save_interval == 0 or i == len(timesteps)):
-                    self.save_tiled_viz(out_dir, i, in_images)
+                    else:
+                        if do_save:
+                            self.save_tiled_viz(out_dir, i, in_images)
 
-                if denoising_strength is None:
-                    latents = torch.randn_like(init_latents[0]).expand(
-                        init_latents.size(0), -1, -1, -1) * self.scheduler.init_noise_sigma
-                    if use_reference:
-                        ref_latents = torch.randn_like(init_latents[0]).expand(
-                            init_latents.size(0), -1, -1, -1) * self.scheduler.init_noise_sigma
-                        latents = torch.cat([ref_latents, latents], dim=2)
-                else:
-                    latents = init_latents
-                    if use_reference:
-                        latents = torch.cat([ref_latents, latents], dim=2)
-                    latents = self.scheduler.add_noise(latents, torch.randn_like(
-                        latents[0]).expand(latents.size(0), -1, -1, -1), timesteps[0:1])
+                        if denoising_strength is None:
+                            latents = torch.randn_like(init_latents[0]).expand(
+                                init_latents.size(0), -1, -1, -1) * self.scheduler.init_noise_sigma
+                            if use_reference:
+                                ref_latents = torch.randn_like(init_latents[0]).expand(
+                                    init_latents.size(0), -1, -1, -1) * self.scheduler.init_noise_sigma
+                                latents = torch.cat([ref_latents, latents], dim=2)
+                        else:
+                            latents = init_latents
+                            if use_reference:
+                                latents = torch.cat([ref_latents, latents], dim=2)
+                            latents = self.scheduler.add_noise(latents, torch.randn_like(
+                                latents[0]).expand(latents.size(0), -1, -1, -1), timesteps[0:1])
 
-        # ================= Save results =================
-        out_mesh = self.mesh_renderer.bake_xyz_shading_fun(
-            [in_mesh.detach()], self.make_nerf_albedo_shading_fun(nerf_code),
-            map_size=map_size, force_auto_uv=force_auto_uv
-        )[0]
+            # ================= Save results =================
+            _bake_texture_kwargs = dict(map_size=2048, force_auto_uv=False)  # default
+            if bake_texture_kwargs is not None:
+                _bake_texture_kwargs.update(bake_texture_kwargs)
+            ori_albedo = in_mesh.albedo
+            if not (ori_albedo is None or in_mesh.textureless):
+                _bake_texture_kwargs.update(dilation_iters=0)
+            out_mesh = self.mesh_renderer.bake_xyz_shading_fun(
+                [in_mesh], self.make_nerf_albedo_shading_fun(nerf_code), **_bake_texture_kwargs
+            )[0]
+            if not (ori_albedo is None or in_mesh.textureless):
+                cos_weight_pow = 4.0  # hard coded
+                ori_weight = 0.2 ** cos_weight_pow
+                map_size = _bake_texture_kwargs['map_size']
+                ori_albedo = F.interpolate(
+                    ori_albedo.permute(2, 0, 1)[None], size=map_size, mode='bilinear'
+                ).squeeze(0).permute(1, 2, 0)
+                cam_weights_uv, valid_mask = self.mesh_renderer.get_cam_weights_uv(
+                    [in_mesh], all_camera_poses[None], intrinsics[None] * (render_size / intrinsics_size),
+                    map_size=map_size, render_bs=render_bs, cos_weight_pow=cos_weight_pow)
+                cam_weights_uv = (cam_weights_uv.squeeze(0) * cam_weights[:, None, None, None]).sum(dim=0)
+                albedo = (ori_albedo[..., :3] * ori_weight + out_mesh.albedo[..., :3] * cam_weights_uv
+                          ) / (ori_weight + cam_weights_uv).clamp(min=1e-6)
+                albedo = edge_dilation(
+                    albedo.permute(2, 0, 1)[None], valid_mask[None].float()
+                ).squeeze(0).permute(1, 2, 0)
+                out_mesh.albedo = albedo
+                out_mesh.textureless = False
+
+        except Exception:
+            print(traceback.format_exc())
+            out_mesh = None
 
         self.nerf.decoder.restore_state_dict()
+
+        if not optim_only:
+            remove_cross_image_attn_proc(self.unet)
 
         return out_mesh

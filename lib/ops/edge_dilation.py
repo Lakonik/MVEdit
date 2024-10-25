@@ -2,7 +2,7 @@ import torch
 import torch.nn.functional as F
 
 
-def edge_dilation(img, mask, radius=3, iter=7):
+def edge_dilation(img, mask, radius=3, iters=7):
     """
     Args:
         img (torch.Tensor): (n, c, h, w)
@@ -12,6 +12,9 @@ def edge_dilation(img, mask, radius=3, iter=7):
     Returns:
         torch.Tensor: Dilated image.
     """
+    if radius == 0 or iters == 0:
+        return img
+
     n, c, h, w = img.size()
     int_radius = round(radius)
     kernel_size = int(int_radius * 2 + 1)
@@ -19,7 +22,7 @@ def edge_dilation(img, mask, radius=3, iter=7):
     kernel_distance = (distance1d_sq.reshape(1, -1) + distance1d_sq.reshape(-1, 1)).sqrt()
     kernel_neg_distance = kernel_distance.max() - kernel_distance + 1
 
-    for _ in range(iter):
+    for _ in range(iters):
 
         mask_out = F.max_pool2d(mask, kernel_size, stride=1, padding=int_radius)
         do_fill_mask = ((mask_out - mask) > 0.5).squeeze(1)

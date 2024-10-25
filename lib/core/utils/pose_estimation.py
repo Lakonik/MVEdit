@@ -28,7 +28,7 @@ def init_matcher():
 
 
 def elev_estimation(in_img, ref_imgs, ref_poses, intrinsics, intrinsics_size, matcher):
-    with torch.no_grad():
+    with torch.inference_mode():
         device = ref_poses.device
         in_img = torch.from_numpy(
             cv2.resize(np.asarray(in_img)[..., :3].mean(axis=-1), (480, 480))
@@ -91,7 +91,7 @@ def pose5dof_estimation(in_img, ref_imgs, ref_poses, intrinsics, intrinsics_size
     """
     Estimate elevation, distance, focal, cx, cy, designed specifically for Zero123++ v1.2
     """
-    with torch.no_grad():
+    with torch.inference_mode():
         device = ref_poses.device
         in_img = torch.from_numpy(
             cv2.resize(np.asarray(in_img)[..., :3].mean(axis=-1), (480, 480))

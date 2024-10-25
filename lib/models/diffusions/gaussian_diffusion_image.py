@@ -50,7 +50,6 @@ class GaussianDiffusionImage(GaussianDiffusion):
                  num_classes=0,
                  sample_method='ddim',
                  timestep_sampler=dict(type='UniformTimeStepSampler'),
-                 denoising_var_mode='FIXED_LARGE',
                  denoising_mean_mode='V',
                  train_cfg=None,
                  test_cfg=None):
@@ -68,7 +67,6 @@ class GaussianDiffusionImage(GaussianDiffusion):
         self.textual_inversions = None
 
         # get output-related configs from denoising
-        self.denoising_var_mode = denoising_var_mode
         self.denoising_mean_mode = denoising_mean_mode
 
         self.betas_cfg = deepcopy(betas_cfg)
@@ -202,15 +200,7 @@ class GaussianDiffusionImage(GaussianDiffusion):
                 cross_attention_kwargs=dict(mode="r") if extra_pose_cond is None else dict(mode="r", pose=extra_pose_cond)
             )
 
-        if self.denoising_mean_mode.upper() == 'EPS':
-            x_0_pred = (x_t - sqrt_one_minus_alpha_bar_t * denoising_output) / sqrt_alpha_bar_t
-        elif self.denoising_mean_mode.upper() == 'START_X':
-            x_0_pred = denoising_output
-        elif self.denoising_mean_mode.upper() == 'V':
-            x_0_pred = sqrt_alpha_bar_t * x_t - sqrt_one_minus_alpha_bar_t * denoising_output
-        else:
-            raise AttributeError('Unknown denoising mean output type '
-                                 f'[{self.denoising_mean_mode}].')
+        x_0_pred = self.convert_to_x_0(x_t, denoising_output, sqrt_alpha_bar_t, sqrt_one_minus_alpha_bar_t)
 
         if grad_guide_fn is not None:
             if clip_denoised:

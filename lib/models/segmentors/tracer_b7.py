@@ -21,7 +21,8 @@ class TracerUniversalB7(nn.Module):
             batch_size: int = 8,
             torch_dtype='bfloat16',
             pretrained='huggingface://Carve/tracer_b7/tracer_b7.pth',
-            erosion: int = 1):
+            erosion: int = 1,
+            freeze=True):
         super(TracerUniversalB7, self).__init__()
         self.model = TracerDecoder(
             encoder=EfficientEncoderB7(),
@@ -42,7 +43,9 @@ class TracerUniversalB7(nn.Module):
             ]
         )
         self.erosion = erosion
-        self.eval()
+        if freeze:
+            self.requires_grad_(False)
+            self.eval()
 
     def init_weights(self, pretrained):
         if pretrained is None:
@@ -56,19 +59,18 @@ class TracerUniversalB7(nn.Module):
         Args:
             data (torch.Tensor): input images, shape (N, 3, H, W)
         """
-        with torch.no_grad():
-            ori_size = data.shape[-2:]
-            masks = []
-            for image_batch in data.to(self.dtype).split(self.batch_size, dim=0):
-                image_batch = self.transform(image_batch)
-                mask_batch = self.model(image_batch)
-                mask_batch = -F.max_pool2d(-mask_batch, self.erosion * 2 + 1, stride=1, padding=self.erosion)
-                masks.append(F_t.resize(mask_batch, ori_size, antialias=False))
-            masks = torch.cat(masks, dim=0) if len(masks) > 1 else masks[0]
-            failure_samples = (masks > 0.2).flatten(1).all(dim=1)
-            failure_threshold = masks < 0.8
-            masks.masked_fill_(failure_samples[:, None, None, None] & failure_threshold, 0)
-            return masks
+        ori_size = data.shape[-2:]
+        masks = []
+        for image_batch in data.to(self.dtype).split(self.batch_size, dim=0):
+            image_batch = self.transform(image_batch)
+            mask_batch = self.model(image_batch)
+            mask_batch = -F.max_pool2d(-mask_batch, self.erosion * 2 + 1, stride=1, padding=self.erosion)
+            masks.append(F_t.resize(mask_batch, ori_size, antialias=False))
+        masks = torch.cat(masks, dim=0) if len(masks) > 1 else masks[0]
+        failure_samples = (masks > 0.2).flatten(1).all(dim=1)
+        failure_threshold = masks < 0.8
+        masks.masked_fill_(failure_samples[:, None, None, None] & failure_threshold, 0)
+        return masks
 
     # def rgb_to_rgba_np(self, rgb: np.ndarray) -> np.ndarray:
     #     """

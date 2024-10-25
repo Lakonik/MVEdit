@@ -56,6 +56,9 @@ class iNGPDecoder(VolumeRenderer):
                  **kwargs):
         super().__init__(*args, **kwargs)
 
+        self.base_resolution = base_resolution
+        self.max_resolution = max_resolution
+        self.n_levels = n_levels
         self.encoder = tcnn.Encoding(
             n_input_dims=3,
             encoding_config={

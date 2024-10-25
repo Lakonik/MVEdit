@@ -2,7 +2,7 @@ import torch.nn as nn
 import torchvision.transforms.functional as F
 from mmgen.models.builder import MODULES
 
-from .l1_loss import l1_loss_mod
+from .pixelwise_loss import l1_loss_mod
 
 
 @MODULES.register_module()

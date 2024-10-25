@@ -5,17 +5,20 @@ import torch
 import torch.nn.functional as F
 import torchvision.transforms.functional as F_t
 from PIL import Image
-from diffusers.models import ControlNetModel
 from pymatting.alpha.estimate_alpha_cf import estimate_alpha_cf
 from pymatting.foreground.estimate_foreground_ml import estimate_foreground_ml
 from pymatting.util.util import stack_images
 from scipy.ndimage import binary_erosion
 from typing import Tuple
-from lib.models.decoders.base_mesh_renderer import MeshRenderer
+from huggingface_hub import hf_hub_download
+from transformers import CLIPTextModel, CLIPTextModelWithProjection, CLIPTokenizer, CLIPVisionModelWithProjection
+from diffusers import AutoencoderKL, ControlNetModel, UNet2DConditionModel
+from lib.models.decoders.mesh_renderer.base_mesh_renderer import MeshRenderer
 from lib.models import SRVGGNetCompact
 from lib.models.autoencoders.base_nerf import BaseNeRF
 from lib.models.decoders.tonemapping import Tonemapping
 from lib.models.segmentors.tracer_b7 import TracerUniversalB7
+from lib.ops.rotation_conversions import matrix_to_quaternion
 
 
 blender2opencv = np.array(
@@ -151,7 +154,13 @@ def do_segmentation_pil(in_imgs, *args, **kwargs):
 
 
 def init_tet(nerf_model, nerf_code=None, density_thresh=5.0, resolution=128):
-    tets = np.load(os.path.abspath(os.path.join(__file__, f'../{resolution}_tets.npz')))
+    local_path = os.path.abspath(os.path.join(__file__, f'../../../demo/tets/{resolution}_tets.npz'))
+    if not os.path.exists(local_path):
+        hf_hub_download(
+            'Lakonik/mvedit_tets',
+            f'{resolution}_tets.npz',
+            local_dir=os.path.dirname(local_path))
+    tets = np.load(local_path)
     verts = -torch.tensor(tets['vertices'], dtype=torch.float32, device='cuda') * 2  # covers [-1, 1]
     indices = torch.tensor(tets['indices'], dtype=torch.long, device='cuda')
     if nerf_code is None:
@@ -179,47 +188,121 @@ def highpass(x, std=5, offset=0.5):
     return offset + x - F_t.gaussian_blur(x, int(round(std)) * 6 + 1, std)
 
 
-def init_common_modules(device, image_enhancer=True, segmentation=True, tonemapping=True, dtype=torch.bfloat16):
-    if image_enhancer:
-        image_enhancer = SRVGGNetCompact(
-            num_in_ch=3, num_out_ch=3, num_feat=64, num_conv=32, upscale=4, act_type='prelu',
-            pretrained='https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-general-x4v3.pth'
-        ).eval().requires_grad_(False).to(dtype=dtype, device=device)
-
+def init_base_modules(device):
     mesh_renderer = MeshRenderer(
         near=0.01,
         far=100,
         ssaa=1,
         texture_filter='linear-mipmap-linear').to(device)
+    tonemapping = Tonemapping()
+    tonemapping.to(device=device)
+    return mesh_renderer, tonemapping
 
+
+def init_mvedit(device,
+                image_enhancer=True,
+                segmentation=True,
+                nerf=True,
+                controlnets=True,
+                max_resolution=320,
+                n_levels=12,
+                dtype=torch.bfloat16):
+    out_dict = dict()
+    if image_enhancer:
+        out_dict['image_enhancer'] = SRVGGNetCompact(
+            num_in_ch=3, num_out_ch=3, num_feat=64, num_conv=32, upscale=4, act_type='prelu',
+            pretrained='https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-general-x4v3.pth'
+        ).eval().requires_grad_(False).to(dtype=dtype, device=device)
     if segmentation:
-        segmentation = TracerUniversalB7(torch_dtype=dtype).to(device)
+        out_dict['segmentation'] = TracerUniversalB7(torch_dtype=dtype).to(device)
+    if nerf:
+        out_dict['nerf'] = BaseNeRF(
+            code_size=(3, 16, 160, 160),
+            code_activation=dict(type='IdentityCode'),
+            grid_size=128,
+            encoder=None,
+            bg_color=1.0,
+            decoder=dict(
+                type='iNGPDecoder',
+                max_resolution=max_resolution,
+                n_levels=n_levels,
+                max_steps=1024,
+                weight_culling_th=0.001),
+            pixel_loss=dict(type='L1LossMod', loss_weight=1.2),
+            patch_loss=dict(type='LPIPSLoss', loss_weight=1.2, net='vgg'),
+            patch_size=128).to(device)
+    if controlnets:
+        controlnet_path = 'lllyasviel/control_v11f1e_sd15_tile'
+        controlnet_depth_path = 'lllyasviel/control_v11f1p_sd15_depth'
+        out_dict['controlnet'] = ControlNetModel.from_pretrained(
+            controlnet_path, torch_dtype=dtype).requires_grad_(False).to(device)
+        out_dict['controlnet_depth'] = ControlNetModel.from_pretrained(
+            controlnet_depth_path, torch_dtype=dtype).requires_grad_(False).to(device)
+    return out_dict
 
-    nerf = BaseNeRF(
-        code_size=(3, 16, 160, 160),
-        code_activation=dict(type='IdentityCode'),
-        grid_size=128,
-        encoder=None,
-        bg_color=1.0,
-        decoder=dict(
-            type='iNGPDecoder',
-            max_steps=1024,
-            weight_culling_th=0.001),
-        pixel_loss=dict(type='L1LossMod', loss_weight=1.2),
-        patch_loss=dict(type='LPIPSLoss', loss_weight=1.2, net='vgg'),
-        patch_size=128).to(device)
 
-    if tonemapping:
-        tonemapping = Tonemapping()
-        tonemapping.to(device=device)
+def init_instant3d(device, ckpt, variant='bf16', dtype=torch.bfloat16, local_files_only=False):
+    unet = UNet2DConditionModel.from_pretrained(
+        ckpt,
+        subfolder='unet',
+        variant=variant,
+        local_files_only=local_files_only,
+        torch_dtype=dtype).requires_grad_(False).to(device)
+    vae = AutoencoderKL.from_pretrained(
+        ckpt,
+        subfolder='vae',
+        variant=variant,
+        local_files_only=local_files_only,
+        torch_dtype=dtype).requires_grad_(False).to(device)
+    text_encoder = CLIPTextModel.from_pretrained(
+        ckpt,
+        subfolder='text_encoder',
+        variant=variant,
+        local_files_only=local_files_only,
+        torch_dtype=dtype).requires_grad_(False).to(device)
+    text_encoder_2 = CLIPTextModelWithProjection.from_pretrained(
+        ckpt,
+        subfolder='text_encoder_2',
+        variant=variant,
+        local_files_only=local_files_only,
+        torch_dtype=dtype).requires_grad_(False).to(device)
+    tokenizer = CLIPTokenizer.from_pretrained(
+        ckpt,
+        local_files_only=local_files_only,
+        subfolder='tokenizer')
+    tokenizer_2 = CLIPTokenizer.from_pretrained(
+        ckpt,
+        local_files_only=local_files_only,
+        subfolder='tokenizer_2')
+    return dict(
+        unet=unet,
+        vae=vae,
+        text_encoder=text_encoder,
+        text_encoder_2=text_encoder_2,
+        tokenizer=tokenizer,
+        tokenizer_2=tokenizer_2)
 
-    controlnet_path = 'lllyasviel/control_v11f1e_sd15_tile'
-    controlnet_depth_path = 'lllyasviel/control_v11f1p_sd15_depth'
 
-    controlnet = ControlNetModel.from_pretrained(controlnet_path, torch_dtype=dtype).to(device)
-    controlnet_depth = ControlNetModel.from_pretrained(controlnet_depth_path, torch_dtype=dtype).to(device)
-
-    return image_enhancer, mesh_renderer, segmentation, nerf, tonemapping, controlnet, controlnet_depth
+def init_zero123plus(device, ckpt, dtype=torch.bfloat16, local_files_only=False):
+    unet = UNet2DConditionModel.from_pretrained(
+        ckpt,
+        subfolder='unet',
+        local_files_only=local_files_only,
+        torch_dtype=dtype).requires_grad_(False).to(device)
+    vae = AutoencoderKL.from_pretrained(
+        ckpt,
+        subfolder='vae',
+        local_files_only=local_files_only,
+        torch_dtype=dtype).requires_grad_(False).to(device)
+    vision_encoder = CLIPVisionModelWithProjection.from_pretrained(
+        ckpt,
+        subfolder='vision_encoder',
+        local_files_only=local_files_only,
+        torch_dtype=dtype).requires_grad_(False).to(device)
+    return dict(
+        unet=unet,
+        vae=vae,
+        vision_encoder=vision_encoder)
 
 
 def join_prompts(prompt_1, prompt_2, separator=', '):
@@ -262,3 +345,35 @@ def zero123plus_postprocess(rgb_img: Image.Image, normal_img: Image.Image) -> Tu
     normal_image_normalized = np.clip(normal_vecs_pred * 255, 0, 255).astype(np.uint8)
 
     return cutout, Image.fromarray(normal_image_normalized)
+
+
+def get_camera_dists(camera_poses, cam_weights, device):
+    num_cameras = camera_poses.size(0)
+    cam_positions = camera_poses[:, :3, 3]  # (num_cameras, 3)
+    cam_quaternions = matrix_to_quaternion(camera_poses[:, :3, :3])  # (num_cameras, 4)
+    dot_quat = (cam_quaternions[:, None, None, :] @ cam_quaternions[None, :, :, None]).reshape(num_cameras, num_cameras)
+    dists_half_theta = torch.acos(dot_quat.abs().clamp(max=1))
+    # (num_cameras, num_cameras)
+    dists = (torch.cdist(
+        cam_positions[None], cam_positions[None], compute_mode='donot_use_mm_for_euclid_dist'
+    ).squeeze(0) + dists_half_theta * 4)
+    if cam_weights is not None:
+        dists = dists * cam_weights[:, None]
+    dists = dists + 999999 * torch.eye(len(dists), dtype=dists.dtype, device=device)
+    return dists
+
+
+def prune_cameras(dists, num_keep_views, max_num_cameras, device, pixel_dist=None):
+    num_cameras = dists.size(0)
+    keep_ids = torch.arange(num_cameras, device=device)
+    for _ in range(num_cameras - max_num_cameras):
+        view_importance = dists[num_keep_views:].amin(dim=1)
+        if pixel_dist is not None:
+            view_importance -= pixel_dist[num_keep_views:] * 0.05
+        remove_id = view_importance.argmin() + num_keep_views
+        keep_mask = torch.arange(len(keep_ids), device=device) != remove_id
+        keep_ids = keep_ids[keep_mask]
+        dists = dists[keep_mask][:, keep_mask]
+        if pixel_dist is not None:
+            pixel_dist = pixel_dist[keep_mask]
+    return keep_ids, dists

@@ -94,14 +94,19 @@ def surround_views_v2(
     return poses, azi * (180 / np.pi), elev_deg
 
 
-def random_surround_views(camera_distance, num_cameras, min_angle=0.1, max_angle=0.4, use_linspace=False, begin_rad=0):
+def random_surround_views(
+        camera_distance, num_cameras, min_angle=0.1, max_angle=0.4,
+        use_linspace=False, begin_rad=0, uniform=True):
     if use_linspace:
         rad = torch.from_numpy(
             np.linspace(0 + np.pi / num_cameras, 2 * np.pi - np.pi / num_cameras, num=num_cameras, dtype=np.float32))
     else:
         rad = torch.rand(num_cameras) * (2 * np.pi)
     rad += begin_rad - rad[0]
-    angles = torch.rand(num_cameras) * (max_angle - min_angle) + min_angle
+    if uniform:
+        angles = torch.asin(torch.rand(num_cameras) * (math.sin(max_angle) - math.sin(min_angle)) + math.sin(min_angle))
+    else:
+        angles = torch.rand(num_cameras) * (max_angle - min_angle) + min_angle
     pos_xy = torch.stack([rad.cos(), rad.sin()], dim=-1)
     pos = torch.cat([pos_xy * angles.cos().unsqueeze(-1), angles.sin().unsqueeze(-1)], dim=-1) * camera_distance
     rot = look_at(pos, torch.zeros_like(pos), pos.new_tensor([0, 0, 1]).expand(pos.size()))
@@ -133,15 +138,15 @@ def random_surround_views_v2(
     return poses
 
 
-def sample_within_circle(num_samples, device=None):
-    r = torch.sqrt(torch.rand(num_samples, device=device))
+def sample_within_circle(num_samples, spread=0.5, device=None):
+    r = torch.sqrt(torch.rand(num_samples, device=device) * spread)
     theta = torch.rand(num_samples, device=device) * 2 * math.pi
     x = r * torch.cos(theta)
     y = r * torch.sin(theta)
     return torch.stack([x, y], dim=-1)
 
 
-def light_sampling(camera_poses, elev_range=[-20, 90], centered_light_views=None):
+def light_sampling(camera_poses, elev_range=[10, 90], centered_light_views=None):
     """
     Args:
         camera_poses (torch.Tensor): (N, 3, 4), camera to world transformation matrix
@@ -174,8 +179,9 @@ def light_sampling(camera_poses, elev_range=[-20, 90], centered_light_views=None
     return world_light_dir, cam_light_dir
 
 
-def view_prompts(camera_poses, front_azi):
-    camera_azi = torch.atan2(camera_poses[:, 1, 3], camera_poses[:, 0, 3])
+def view_prompts(camera_poses, front_azi, camera_azi=None):
+    if camera_poses is not None:
+        camera_azi = torch.atan2(camera_poses[:, 1, 3], camera_poses[:, 0, 3])
     delta_azi = (camera_azi - front_azi) % (2 * math.pi)
     out_prompts = []
     for delta_azi_single in delta_azi:

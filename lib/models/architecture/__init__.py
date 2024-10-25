@@ -1,7 +1,7 @@
 from .ddpm import DenoisingUnetMod, MultiHeadAttentionMod, DenoisingResBlockMod, \
     DenoisingDownsampleMod, DenoisingUpsampleMod
 from .diffusers import UNetLoRAWrapper, UNet2DConditionModel, CLIPTextModel, CLIPLoRAWrapper, \
-    VAEDecoder, LDMAutoEncoder, LDMDecoder, LDMEncoder
+    VAEDecoder, PretrainedVAE, PretrainedVAEDecoder, PretrainedVAEEncoder
 try:
     from .volume import UNetVolume
 except:
@@ -11,5 +11,5 @@ from .depth import MiDaS
 __all__ = ['DenoisingUnetMod', 'MultiHeadAttentionMod', 'DenoisingResBlockMod',
            'DenoisingDownsampleMod', 'DenoisingUpsampleMod',
            'UNetLoRAWrapper', 'UNet2DConditionModel', 'CLIPTextModel',
-           'CLIPLoRAWrapper', 'VAEDecoder', 'LDMAutoEncoder', 'LDMDecoder', 'LDMEncoder',
+           'CLIPLoRAWrapper', 'VAEDecoder', 'PretrainedVAE', 'PretrainedVAEDecoder', 'PretrainedVAEEncoder',
            'MiDaS']

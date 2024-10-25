@@ -3,22 +3,25 @@ import sys
 
 sys.path.append(os.path.abspath(os.path.join(__file__, '../')))
 if 'OMP_NUM_THREADS' not in os.environ:
-    os.environ['OMP_NUM_THREADS'] = '16'
+    os.environ['OMP_NUM_THREADS'] = '32'
 
 import shutil
 import os.path as osp
 import argparse
 import torch
+
+torch.backends.cuda.matmul.allow_tf32 = True
+
 import gradio as gr
 from functools import partial
-from lib.core.mvedit_webui.shared_opts import send_to_click
-from lib.core.mvedit_webui.tab_img_to_3d import create_interface_img_to_3d
-from lib.core.mvedit_webui.tab_3d_to_3d import create_interface_3d_to_3d
-from lib.core.mvedit_webui.tab_text_to_img_to_3d import create_interface_text_to_img_to_3d
-from lib.core.mvedit_webui.tab_retexturing import create_interface_retexturing
-from lib.core.mvedit_webui.tab_3d_to_video import create_interface_3d_to_video
-from lib.core.mvedit_webui.tab_stablessdnerf_to_3d import create_interface_stablessdnerf_to_3d
-from lib.apis.mvedit import MVEditRunner
+from lib.core.webui.shared_opts import send_to_click
+from lib.core.webui.tab_img_to_3d import create_interface_img_to_3d
+from lib.core.webui.tab_3d_to_3d import create_interface_3d_to_3d
+from lib.core.webui.tab_text_to_img_to_3d import create_interface_text_to_img_to_3d
+from lib.core.webui.tab_retexturing import create_interface_retexturing
+from lib.core.webui.tab_3d_to_video import create_interface_3d_to_video
+from lib.core.webui.tab_stablessdnerf_to_3d import create_interface_stablessdnerf_to_3d
+from lib.apis.adapter3d import Adapter3DRunner
 from lib.version import __version__
 
 
@@ -40,7 +43,8 @@ def parse_args():
     parser.add_argument('--empty-cache', action='store_true', help='Empty the cache directory')
     parser.add_argument('--unload-models', action='store_true', help='Auto-unload unused models to free VRAM')
     parser.add_argument('--share', action='store_true', help='Enable Gradio sharing')
-    parser.add_argument('--bf16', action='store_true', help='Use BF16 instead of FP16')
+    parser.add_argument('--fp16', action='store_true', help='Use FP16 instead of BF16')
+    parser.add_argument('--gs-opacity-thr', type=float, default=0.025, help='GS opacity threshold')
     return parser.parse_args()
 
 
@@ -49,42 +53,48 @@ def main():
 
     if args.empty_cache:
         if osp.exists('./gradio_cached_examples'):
-            shutil.rmtree('./gradio_cached_examples')
+            for f in os.listdir('./gradio_cached_examples'):
+                shutil.rmtree(osp.join('./gradio_cached_examples', f))
         if os.environ.get('GRADIO_TEMP_DIR', None) is not None and osp.exists(os.environ['GRADIO_TEMP_DIR']):
             shutil.rmtree(os.environ['GRADIO_TEMP_DIR'])
 
     torch.set_grad_enabled(False)
-    runner = MVEditRunner(
+    runner = Adapter3DRunner(
         device=torch.device('cuda'),
         local_files_only=args.local_files_only,
         unload_models=args.unload_models,
         out_dir=osp.join(osp.dirname(__file__), 'viz') if args.debug > 0 else None,
         save_interval=DEBUG_SAVE_INTERVAL[args.debug],
         save_all_interval=1 if DEBUG_SAVE_INTERVAL[args.debug] == 2 else None,
-        dtype=torch.bfloat16 if args.bf16 else torch.float16,
+        dtype=torch.float16 if args.fp16 else torch.bfloat16,
         debug=args.debug > 0,
         no_safe=args.no_safe
     )
 
     with gr.Blocks(analytics_enabled=False,
-                   title='MVEdit 3D Toolbox',
-                   css='lib/core/mvedit_webui/style.css'
+                   title='3D-Adapter Suite',
+                   css='lib/core/webui/style.css'
                    ) as demo:
-        md_txt = '# MVEdit 3D Toolbox v' + __version__ + \
-                 '\n\nOfficial demo of the paper [Generic 3D Diffusion Adapter Using Controlled Multi-View Editing](https://lakonik.github.io/mvedit).' \
-                 '<br>The generation process is stochastic so the results vary between runs. ' \
-                 'Try multiple runs if you find the result unsatisfactory.' \
-                 '<br>MVEdit adopts Stable Diffusion v1.5 models. Finetuned community ' \
-                 'checkpoints can be applied in the **Advanced settings**. These models can ' \
-                 'reinforce or exacerbate social biases. Misuse or malicious use is prohibited.'
+        if args.empty_cache and osp.exists(demo.GRADIO_CACHE):
+            shutil.rmtree(demo.GRADIO_CACHE)
+
+        md_txt = '# 3D-Adapter Suite v' + __version__ + \
+                 '\n\nOfficial demo of the paper [3D-Adapter: Geometry-Consistent Multi-View Diffusion ' \
+                 'for High-Quality 3D Generation](https://lakonik.github.io/3d-adapter) and ' \
+                 '[Generic 3D Diffusion Adapter Using Controlled Multi-View Editing]' \
+                 '(https://lakonik.github.io/mvedit/). Part of this demo is based on [GRM Live Demo]' \
+                 '(https://huggingface.co/spaces/GRM-demo/GRM).' \
+                 '<br>This demo only includes the optimization-based 3D-Adapters (MVEdit). The GRM-based 3D-Adapters ' \
+                 'will be released after the release of the [original GRM code](https://github.com/justimyhxu/GRM). ' \
+                 'Visit our [official huggingface demo page]() to try GRM-based 3D-Adapters.'
         if not args.advanced:
             md_txt += '<br>**Advanced settings** are disabled. Deploy the app with `--advanced` to enable them.'
         gr.Markdown(md_txt)
 
-        with gr.Tabs(selected='tab_img_to_3d') as main_tabs:
+        with gr.Tabs(selected='tab_text_to_3d') as main_tabs:
             with gr.TabItem('Text-to-3D', id='tab_text_to_3d'):
                 with gr.Tabs() as sub_tabs_text_to_3d:
-                    with gr.TabItem('StableSSDNeRF (ShapeNet Cars)', id='tab_stablessdnerf'):
+                    with gr.TabItem('StableSSDNeRF (ShapeNet Cars)/MVEdit', id='tab_stablessdnerf'):
                         _, var_stablessdnerf = create_interface_stablessdnerf_to_3d(
                             runner.run_stablessdnerf,
                             runner.run_stablessdnerf_to_mesh,
@@ -113,7 +123,7 @@ def main():
                             advanced=args.advanced)
             with gr.TabItem('Image-to-3D', id='tab_img_to_3d'):
                 with gr.Tabs() as sub_tabs_img_to_3d:
-                    with gr.TabItem(f'Zero123++ v1.1', id='tab_zero123plus1_1'):
+                    with gr.TabItem('Zero123++ v1.1/MVEdit', id='tab_zero123plus1_1'):
                         _, var_img_to_3d_1_1 = create_interface_img_to_3d(
                             runner.run_segmentation,
                             runner.run_zero123plus,
@@ -122,7 +132,7 @@ def main():
                                        'img_to_3d_1_1_zero123plus',
                                        'img_to_3d_1_1_zero123plus_to_mesh'],
                             init_inverse_steps=640, n_inverse_steps=80, diff_bs=args.diff_bs, advanced=args.advanced)
-                    with gr.TabItem(f'Zero123++ v1.2', id='tab_zero123plus1_2'):
+                    with gr.TabItem('Zero123++ v1.2/MVEdit', id='tab_zero123plus1_2'):
                         _, var_img_to_3d_1_2 = create_interface_img_to_3d(
                             runner.run_segmentation,
                             runner.run_zero123plus1_2,
@@ -134,62 +144,56 @@ def main():
                             advanced=args.advanced, pred_normal=True)
             with gr.TabItem('3D-to-3D', id='tab_3d_to_3d'):
                 with gr.Tabs() as sub_tabs_3d_to_3d:
-                    with gr.TabItem('Text-Guided', id='tab_text_3d_to_3d'):
+                    with gr.TabItem('MVEdit', id='tab_text_3d_to_3d'):
                         _, var_text_3d_to_3d = create_interface_3d_to_3d(
                             runner.run_mesh_preproc, runner.run_3d_to_3d,
                             examples=[
                                 ['demo/examples_meshes/lara.glb', 3, 'tomb raider lara croft, wearing a backpack', 0.8, 7],
-                                ['demo/examples_meshes/zuckerberg_hr.glb', 0, 'elon musk cg rendering', 0.8, 7],
-                                ['demo/examples_meshes/camel.glb', -1, 'cg rendering of a camel', 0.8, 7],
                             ],
-                            denoising_strength=0.7, api_names=['3d_preproc', 'text_3d_to_3d'],
+                            denoising_strength=0.7, api_names=['3d_preproc', '3d_to_3d_mvedit'],
                             diff_bs=args.diff_bs, advanced=args.advanced)
-                    with gr.TabItem('Instruct', id='tab_instruct_3d_to_3d'):
+                    with gr.TabItem('MVEdit Instruct', id='tab_instruct_3d_to_3d'):
                         _, var_instruct_3d_to_3d = create_interface_3d_to_3d(
                             runner.run_mesh_preproc, runner.run_3d_to_3d,
                             examples=[
                                 ['demo/examples_meshes/polnareff.glb', 9, 'as a deadpool cosplay photo', 1.0, 5],
-                                ['demo/examples_meshes/lara_hr.glb', 3, 'turn her into a cyborg', 1.0, 5],
-                                ['demo/examples_meshes/lara_hr.glb', 3, 'as a zelda cosplay, blue outfit', 1.0, 6],
-                                ['demo/examples_meshes/cj.glb', 9, 'give him a green jacket', 1.0, 5],
-                                ['demo/examples_meshes/polnareff.glb', 9, 'make it a marble roman sculpture', 1.0, 6],
                             ],
-                            denoising_strength=1.0, api_names=[False, 'instruct_3d_to_3d'],
+                            denoising_strength=1.0, api_names=[False, '3d_to_3d_mvedit_instruct'],
                             diff_bs=args.diff_bs, advanced=args.advanced, instruct_3d_to_3d=True)
             with gr.TabItem('Re-Texturing', id='tab_retex'):
                 with gr.Tabs() as sub_tabs_retex:
-                    with gr.TabItem('Text/Image-Guided', id='tab_text_retex'):
+                    with gr.TabItem('MVEdit', id='tab_text_retex'):
                         _, var_text_retex = create_interface_retexturing(
                             runner.run_mesh_preproc, runner.run_retex,
                             examples=[
                                 ['demo/examples_meshes/cj_notex.glb', 9, 'an nba basketball player', '', 0.9, False],
-                                ['demo/examples_meshes/robot.glb', 9, 'a robot', '', 0.9, False],
-                                ['demo/examples_meshes/napoleon.glb', 9, 'photo of napoleon', 'sculpture', 1.0, False],
-                                ['demo/examples_meshes/headphone.glb', -1, 'a close up of a pair of headphones in green cover', '', 0.9, False],
-                                ['demo/examples_meshes/car.glb', 6, 'a yellow vintage car', '', 0.9, False],
                             ],
-                            denoising_strength=0.9, api_names=[False, 'text_retex'],
+                            denoising_strength=0.9, api_names=[False, 'retex_mvedit'],
                             diff_bs=args.diff_bs, advanced=args.advanced)
-                    with gr.TabItem('Instruct', id='tab_instruct_retex'):
+                    with gr.TabItem('MVEdit Instruct', id='tab_instruct_retex'):
                         _, var_instruct_retex = create_interface_retexturing(
                             runner.run_mesh_preproc, runner.run_retex,
                             examples=[
-                                ['demo/examples_meshes/cj.glb', 9, 'add dotted printing to his tank top', '', 0.8, True],
                                 ['demo/examples_meshes/cj.glb', 9, 'as an nba basketball player', '', 0.8, True],
                             ],
-                            denoising_strength=1.0, api_names=[False, 'instruct_retex'],
+                            denoising_strength=1.0, api_names=[False, 'retex_mvedit_instruct'],
                             diff_bs=args.diff_bs, advanced=args.advanced, instruct_retex=True)
             with gr.TabItem('Tools', id='tab_tools'):
                 with gr.Tabs() as sub_tabs_tools:
-                    with gr.TabItem('Export Video', id='tab_export_video'):
-                        _, var_3d_to_video = create_interface_3d_to_video(
-                            runner.run_mesh_preproc, runner.run_video, api_names=[False, '3d_to_video'])
+                    with gr.TabItem('Export video (mesh)', id='tab_export_video_mesh'):
+                        _, var_mesh_to_video = create_interface_3d_to_video(
+                            runner.run_mesh_preproc, runner.run_mesh_to_video,
+                            api_names=[False, 'mesh_to_video'])
 
-        for var_dict in [var_stablessdnerf, var_text_3d_to_3d, var_instruct_3d_to_3d, var_img_to_3d_1_1, var_img_to_3d_1_2,
-                         var_text_retex, var_instruct_retex]:
+        for var_dict in [var_stablessdnerf, var_text_3d_to_3d, var_instruct_3d_to_3d,
+                         var_img_to_3d_1_1, var_img_to_3d_1_2, var_text_retex, var_instruct_retex]:
             instruct = var_dict.get('instruct', False)
-            in_fields = ['output'] if instruct else ['output', 'prompt', 'negative_prompt']
-            out_fields = ['in_mesh'] if instruct else ['in_mesh', 'prompt', 'negative_prompt']
+            in_fields = ['output']
+            out_fields = ['in_mesh']
+            if not instruct:
+                prompt_fields = [k for k in ['prompt', 'negative_prompt'] if k in var_dict]
+                in_fields += prompt_fields
+                out_fields += prompt_fields
             if 'to_text_3d_to_3d' in var_dict:
                 var_dict['to_text_3d_to_3d'].click(
                     fn=partial(send_to_click, target_tab_ids=['tab_3d_to_3d', 'tab_text_3d_to_3d']),
@@ -234,15 +238,15 @@ def main():
                     **var_instruct_retex['preproc_kwargs'],
                     api_name=False
                 )
-            if 'export_video' in var_dict:
-                var_dict['export_video'].click(
-                    fn=partial(send_to_click, target_tab_ids=['tab_tools', 'tab_export_video']),
+            if 'export_video_mesh' in var_dict:
+                var_dict['export_video_mesh'].click(
+                    fn=partial(send_to_click, target_tab_ids=['tab_tools', 'tab_export_video_mesh']),
                     inputs=var_dict['output'],
-                    outputs=[var_3d_to_video['in_mesh']] + [main_tabs, sub_tabs_tools],
+                    outputs=[var_mesh_to_video['in_mesh']] + [main_tabs, sub_tabs_tools],
                     show_progress=False,
                     api_name=False
                 ).success(
-                    **var_3d_to_video['preproc_kwargs'],
+                    **var_mesh_to_video['preproc_kwargs'],
                     api_name=False
                 )
 

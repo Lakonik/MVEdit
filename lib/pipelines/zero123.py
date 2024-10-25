@@ -454,7 +454,7 @@ class Zero123Pipeline(DiffusionPipeline):
 
         return latent_model_input
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def __call__(
         self,
         image: Optional[

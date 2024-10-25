@@ -66,11 +66,7 @@ class GaussianDiffusion(nn.Module):
         self.num_classes = num_classes
         self.num_timesteps = num_timesteps
         self.sample_method = sample_method
-        self._denoising_cfg = deepcopy(denoising)
-        self.denoising = build_module(
-            denoising,
-            default_args=dict(
-                num_classes=num_classes, num_timesteps=num_timesteps))
+        self.denoising = build_module(denoising)
         self.denoising_mean_mode = denoising_mean_mode
 
         self.betas_cfg = deepcopy(betas_cfg)
@@ -181,6 +177,18 @@ class GaussianDiffusion(nn.Module):
         std = var_to_tensor(self.sqrt_one_minus_alphas_bar, t.cpu(), tar_shape).to(x_0)
         return x_0 * mean + noise * std, mean, std
 
+    def convert_to_x_0(self, x_t, denoising_output, sqrt_alpha_bar_t, sqrt_one_minus_alpha_bar_t):
+        if self.denoising_mean_mode.upper() == 'EPS':
+            x_0_pred = (x_t - sqrt_one_minus_alpha_bar_t * denoising_output) / sqrt_alpha_bar_t
+        elif self.denoising_mean_mode.upper() == 'START_X':
+            x_0_pred = denoising_output
+        elif self.denoising_mean_mode.upper() == 'V':
+            x_0_pred = sqrt_alpha_bar_t * x_t - sqrt_one_minus_alpha_bar_t * denoising_output
+        else:
+            raise AttributeError('Unknown denoising mean output type '
+                                 f'[{self.denoising_mean_mode}].')
+        return x_0_pred
+
     def pred_x_0(self, x_t, t, grad_guide_fn=None, concat_cond=None, cfg=dict()):
         clip_denoised = cfg.get('clip_denoised', True)
         clip_range = cfg.get('clip_range', [-1, 1])
@@ -201,15 +209,7 @@ class GaussianDiffusion(nn.Module):
 
         denoising_output = self.denoising(x_t, t, concat_cond=concat_cond)
 
-        if self.denoising_mean_mode.upper() == 'EPS':
-            x_0_pred = (x_t - sqrt_one_minus_alpha_bar_t * denoising_output) / sqrt_alpha_bar_t
-        elif self.denoising_mean_mode.upper() == 'START_X':
-            x_0_pred = denoising_output
-        elif self.denoising_mean_mode.upper() == 'V':
-            x_0_pred = sqrt_alpha_bar_t * x_t - sqrt_one_minus_alpha_bar_t * denoising_output
-        else:
-            raise AttributeError('Unknown denoising mean output type '
-                                 f'[{self.denoising_mean_mode}].')
+        x_0_pred = self.convert_to_x_0(x_t, denoising_output, sqrt_alpha_bar_t, sqrt_one_minus_alpha_bar_t)
 
         if grad_guide_fn is not None:
             if clip_denoised:

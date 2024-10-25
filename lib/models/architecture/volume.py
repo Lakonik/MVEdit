@@ -405,8 +405,7 @@ class UNetVolume(ModelMixin):
         else:
             self.conv_out = None
 
-        if is_xformers_available():
-            self.enable_xformers_memory_efficient_attention()
+        self.enable_xformers_memory_efficient_attention()
 
         self.zero_init_residual = zero_init_residual
         self.init_weights()

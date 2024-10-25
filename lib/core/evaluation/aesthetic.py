@@ -86,7 +86,7 @@ class AestheticScore:
 
     def predict(self, image):
         image_input = self.model_dict['clip_preprocess'](image).unsqueeze(0).to(self.model_dict['device'])
-        with torch.no_grad():
+        with torch.inference_mode():
             image_features = self.model_dict['clip_model'].encode_image(image_input)
             if self.model_dict['device'] == 'cuda':
                 im_emb_arr = normalized(image_features.detach().cpu().numpy())

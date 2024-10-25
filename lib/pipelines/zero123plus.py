@@ -335,7 +335,7 @@ class Zero123PlusPipeline(diffusers.StableDiffusionPipeline):
         latent = latent.reshape(3, 2, bs, c, h // 3, w // 2).permute(2, 3, 0, 4, 1, 5).reshape(bs, c, h, w)
         return latent
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def __call__(
             self,
             images: Union[Image.Image, List[Image.Image]] = None,

@@ -18,7 +18,7 @@ from mmgen.models.builder import build_module
 from mmgen.models.architectures.common import get_module_device
 from mmgen.apis import set_random_seed  # isort:skip  # noqa
 from .utils import extract_geometry, surround_views, vdb_utils, rgetattr, rsetattr
-from .utils.nerf_utils import extract_fields
+from .utils.geometry_utils import extract_fields
 from lib.datasets.shapenet_srn import load_pose, load_intrinsics
 from videoio import VideoWriter
 import matplotlib.pyplot as plotlib

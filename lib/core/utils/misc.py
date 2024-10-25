@@ -2,11 +2,12 @@ import functools
 import torch
 import torch.distributed as dist
 
-from mmcv.parallel import MMDistributedDataParallel
 from collections import defaultdict, abc as container_abcs
 from itertools import chain
 from functools import partial
 from six.moves import map, zip
+from lib.parallel import MMDistributedDataParallel
+
 
 
 def multi_apply(func, *args, **kwargs):

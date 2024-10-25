@@ -50,13 +50,14 @@ class IPAdapter:
         # set image encoder
         self.image_encoder = CLIPVisionModelWithProjection.from_pretrained(
             image_encoder_path, subfolder='models/image_encoder', local_files_only=local_files_only
-        ).to(self.device, dtype=self.dtype)
+        ).requires_grad_(False).to(self.device, dtype=self.dtype)
         self.clip_image_processor = CLIPImageProcessor(resample=resample)
 
         # set IPAdapter
         self.set_ip_adapter()
         self.image_proj_model = self.init_proj() if not self.is_plus else self.init_proj_plus()
         self.image_proj_model.load_state_dict(ipadapter_model["image_proj"])
+        self.image_proj_model.requires_grad_(False)
         ip_layers = torch.nn.ModuleList(self.pipe.unet.attn_processors.values())
         ip_layers.load_state_dict(ipadapter_model["ip_adapter"])
 
@@ -99,7 +100,7 @@ class IPAdapter:
             else:
                 attn_procs[name] = IPAttnProcessor(
                     hidden_size=hidden_size, cross_attention_dim=cross_attention_dim,
-                    scale=1.0, num_tokens=self.num_tokens).to(self.device, dtype=self.dtype)
+                    scale=1.0, num_tokens=self.num_tokens).to(self.device, dtype=self.dtype).requires_grad_(False)
         unet.set_attn_processor(attn_procs)
         if hasattr(self.pipe, "controlnet"):
             if isinstance(self.pipe.controlnet, MultiControlNetModel):

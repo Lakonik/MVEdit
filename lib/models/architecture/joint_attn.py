@@ -43,3 +43,12 @@ def apply_cross_image_attn_proc(model):
         attn_procs[name] = CrossImageAttnProcWrapper(model.attn_processors[name])
     model.set_attn_processor(attn_procs)
     return
+
+
+def remove_cross_image_attn_proc(model):
+    attn_procs = dict()
+    for name in model.attn_processors.keys():
+        if isinstance(model.attn_processors[name], CrossImageAttnProcWrapper):
+            attn_procs[name] = model.attn_processors[name].base_attn_proc
+    model.set_attn_processor(attn_procs)
+    return

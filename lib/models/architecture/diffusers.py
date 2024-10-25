@@ -5,11 +5,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from typing import Dict, Any, Optional, Union, Tuple
 from collections import OrderedDict
 from copy import deepcopy
 from transformers import CLIPTextModel as _CLIPTextModel
 from diffusers.models import AutoencoderKL
 from diffusers.models.unet_2d_condition import UNet2DConditionModel as _UNet2DConditionModel
+from diffusers.models import ControlNetModel
 from diffusers.models.attention_processor import Attention, LoRALinearLayer, LoRAXFormersAttnProcessor, LoRAAttnProcessor, LoRAAttnProcessor2_0, AttnProcessor, AttnProcessor2_0, XFormersAttnProcessor
 try:
     from diffusers.models.vae import Decoder
@@ -52,6 +54,116 @@ def autocast_patch(module, dtype=None, enabled=True):
     module.forward = make_new_forward(module.forward, dtype, enabled)
 
 
+def unet_enc(
+        unet,
+        sample: torch.FloatTensor,
+        timestep: Union[torch.Tensor, float, int],
+        encoder_hidden_states: torch.Tensor,
+        cross_attention_kwargs: Optional[Dict[str, Any]] = None,
+        added_cond_kwargs=None):
+    # 0. center input if necessary
+    if unet.config.center_input_sample:
+        sample = 2 * sample - 1.0
+
+    # 1. time
+    t_emb = unet.get_time_embed(sample=sample, timestep=timestep)
+    emb = unet.time_embedding(t_emb)
+    aug_emb = unet.get_aug_embed(
+        emb=emb, encoder_hidden_states=encoder_hidden_states, added_cond_kwargs=added_cond_kwargs)
+    emb = emb + aug_emb if aug_emb is not None else emb
+
+    if unet.time_embed_act is not None:
+        emb = unet.time_embed_act(emb)
+
+    encoder_hidden_states = unet.process_encoder_hidden_states(
+        encoder_hidden_states=encoder_hidden_states, added_cond_kwargs=added_cond_kwargs)
+
+    # 2. pre-process
+    sample = unet.conv_in(sample)
+
+    # 3. down
+    down_block_res_samples = (sample,)
+    for downsample_block in unet.down_blocks:
+        if hasattr(downsample_block, "has_cross_attention") and downsample_block.has_cross_attention:
+            sample, res_samples = downsample_block(
+                hidden_states=sample,
+                temb=emb,
+                encoder_hidden_states=encoder_hidden_states,
+                cross_attention_kwargs=cross_attention_kwargs,
+            )
+        else:
+            sample, res_samples = downsample_block(hidden_states=sample, temb=emb)
+
+        down_block_res_samples += res_samples
+
+    return emb, down_block_res_samples, sample
+
+
+def unet_dec(
+        unet,
+        emb,
+        down_block_res_samples,
+        sample,
+        encoder_hidden_states: torch.Tensor,
+        cross_attention_kwargs: Optional[Dict[str, Any]] = None,
+        down_block_additional_residuals: Optional[Tuple[torch.Tensor]] = None,
+        mid_block_additional_residual: Optional[torch.Tensor] = None):
+    is_controlnet = mid_block_additional_residual is not None and down_block_additional_residuals is not None
+
+    if is_controlnet:
+        new_down_block_res_samples = ()
+
+        for down_block_res_sample, down_block_additional_residual in zip(
+                down_block_res_samples, down_block_additional_residuals):
+            down_block_res_sample = down_block_res_sample + down_block_additional_residual
+            new_down_block_res_samples = new_down_block_res_samples + (down_block_res_sample,)
+
+        down_block_res_samples = new_down_block_res_samples
+
+    # 4. mid
+    if unet.mid_block is not None:
+        if hasattr(unet.mid_block, "has_cross_attention") and unet.mid_block.has_cross_attention:
+            sample = unet.mid_block(
+                sample,
+                emb,
+                encoder_hidden_states=encoder_hidden_states,
+                cross_attention_kwargs=cross_attention_kwargs,
+            )
+        else:
+            sample = unet.mid_block(sample, emb)
+
+    if is_controlnet:
+        sample = sample + mid_block_additional_residual
+
+    # 5. up
+    for i, upsample_block in enumerate(unet.up_blocks):
+        res_samples = down_block_res_samples[-len(upsample_block.resnets):]
+        down_block_res_samples = down_block_res_samples[: -len(upsample_block.resnets)]
+
+        if hasattr(upsample_block, 'has_cross_attention') and upsample_block.has_cross_attention:
+            sample = upsample_block(
+                hidden_states=sample,
+                temb=emb,
+                res_hidden_states_tuple=res_samples,
+                encoder_hidden_states=encoder_hidden_states,
+                cross_attention_kwargs=cross_attention_kwargs,
+            )
+        else:
+            sample = upsample_block(
+                hidden_states=sample,
+                temb=emb,
+                res_hidden_states_tuple=res_samples,
+            )
+
+    # 6. post-process
+    if unet.conv_norm_out:
+        sample = unet.conv_norm_out(sample)
+        sample = unet.conv_act(sample)
+    sample = unet.conv_out(sample)
+
+    return sample
+
+
 @MODULES.register_module()
 class UNet2DConditionModel(_UNet2DConditionModel):
     def __init__(self,
@@ -70,12 +182,11 @@ class UNet2DConditionModel(_UNet2DConditionModel):
                 rgetattr(self, attr).requires_grad_(True)
 
         self.init_weights(pretrained)
-        dtype = getattr(torch, torch_dtype)
-        self.to(dtype)
+        if torch_dtype is not None:
+            self.to(getattr(torch, torch_dtype))
 
-        if is_xformers_available():
-            self.set_use_memory_efficient_attention_xformers(
-                not hasattr(torch.nn.functional, 'scaled_dot_product_attention'))
+        self.set_use_memory_efficient_attention_xformers(
+            not hasattr(torch.nn.functional, 'scaled_dot_product_attention'))
 
         self.freeze_exclude_fp32 = freeze_exclude_fp32
         if self.freeze_exclude_fp32:
@@ -86,9 +197,7 @@ class UNet2DConditionModel(_UNet2DConditionModel):
                 autocast_patch(m, enabled=False)
 
     def init_weights(self, pretrained):
-        if pretrained is None:
-            raise NotImplementedError
-        else:
+        if pretrained is not None:
             logger = get_root_logger()
             # load_checkpoint(self, pretrained, map_location='cpu', strict=False, logger=logger)
             checkpoint = _load_checkpoint(pretrained, map_location='cpu', logger=logger)
@@ -120,6 +229,12 @@ class UNet2DConditionModel(_UNet2DConditionModel):
         return super().forward(
             sample, timestep, encoder_hidden_states, return_dict=False, **kwargs)[0].to(dtype)
 
+    def forward_enc(self, sample, timestep, encoder_hidden_states, **kwargs):
+        return unet_enc(self, sample, timestep, encoder_hidden_states, **kwargs)
+
+    def forward_dec(self, emb, down_block_res_samples, sample, encoder_hidden_states, **kwargs):
+        return unet_dec(self, emb, down_block_res_samples, sample, encoder_hidden_states, **kwargs)
+
 
 @MODULES.register_module()
 class UNetLoRAWrapper(nn.Module):
@@ -148,7 +263,7 @@ class UNetLoRAWrapper(nn.Module):
                 hidden_size=hidden_size,
                 cross_attention_dim=cross_attention_dim))
             m = build_module(lora_cfg)
-            if isinstance(m, ReferenceOnlyAttnProc):
+            if isinstance(m, ReferenceAttnProc):
                 p = m.chained_proc
             else:
                 p = m
@@ -178,14 +293,14 @@ class UNetLoRAWrapper(nn.Module):
         def traverse(name: str, module: Attention):
             if hasattr(module, "set_processor"):
                 baked_processor = module.processor
-                if isinstance(module.processor, ReferenceOnlyAttnProc):
+                if isinstance(module.processor, ReferenceAttnProc):
                     baked_processor = baked_processor.chained_proc
                 assert isinstance(baked_processor, (LoRAAttnProcessor, LoRAAttnProcessor2_0, LoRAXFormersAttnProcessor))
                 module.to_k.weight += expansion(baked_processor.to_k_lora)
                 module.to_v.weight += expansion(baked_processor.to_v_lora)
                 module.to_q.weight += expansion(baked_processor.to_q_lora)
                 module.to_out[0].weight += expansion(baked_processor.to_out_lora)
-                if isinstance(module.processor, ReferenceOnlyAttnProc):
+                if isinstance(module.processor, ReferenceAttnProc):
                     module.processor._modules.pop('chained_proc')
                     module.processor.chained_proc = ordinary_attn
                 else:
@@ -376,9 +491,8 @@ class VAEDecoder(Decoder, ModelMixin):
             norm_num_groups=norm_num_groups,
             act_fn=act_fn,
             norm_type=norm_type)
-        if is_xformers_available():
-            self.set_use_memory_efficient_attention_xformers(
-                not hasattr(torch.nn.functional, 'scaled_dot_product_attention'))
+        self.set_use_memory_efficient_attention_xformers(
+            not hasattr(torch.nn.functional, 'scaled_dot_product_attention'))
         self.zero_init_residual = zero_init_residual
         self.init_weights()
 
@@ -398,15 +512,82 @@ class VAEDecoder(Decoder, ModelMixin):
 
 
 @MODULES.register_module()
-class LDMAutoEncoder(nn.Module):
+class PretrainedUNet(nn.Module):
+    def __init__(self,
+                 from_pretrained=None,
+                 freeze=True,
+                 torch_dtype='float32',
+                 checkpointing=True,
+                 use_ref_attn=False,
+                 **kwargs):
+        super().__init__()
+        if torch_dtype is not None:
+            kwargs.update(torch_dtype=getattr(torch, torch_dtype))
+        self.unet = _UNet2DConditionModel.from_pretrained(
+            from_pretrained, **kwargs)
+        self.freeze = freeze
+        if self.freeze:
+            self.requires_grad_(False)
+        self.unet.set_use_memory_efficient_attention_xformers(
+            not hasattr(torch.nn.functional, 'scaled_dot_product_attention'))
+        if use_ref_attn:
+            unet_attn_procs = dict()
+            for name, attn_proc in self.unet.attn_processors.items():
+                unet_attn_procs[name] = ReferenceAttnProc(
+                    attn_proc, enabled=name.endswith('attn1.processor'), name=name)
+            self.unet.set_attn_processor(unet_attn_procs)
+        if checkpointing:
+            self.unet.enable_gradient_checkpointing()
+
+    def forward(self, sample, timestep, encoder_hidden_states, **kwargs):
+        return self.unet(
+            sample, timestep, encoder_hidden_states, return_dict=False, **kwargs)[0]
+
+    def forward_enc(self, sample, timestep, encoder_hidden_states, **kwargs):
+        return unet_enc(self.unet, sample, timestep, encoder_hidden_states, **kwargs)
+
+    def forward_dec(self, emb, down_block_res_samples, sample, encoder_hidden_states, **kwargs):
+        return unet_dec(self.unet, emb, down_block_res_samples, sample, encoder_hidden_states, **kwargs)
+
+
+@MODULES.register_module()
+class PretrainedControlNet(nn.Module):
+    def __init__(self,
+                 from_pretrained=None,
+                 freeze=True,
+                 torch_dtype='float32',
+                 checkpointing=True,
+                 **kwargs):
+        super().__init__()
+        if torch_dtype is not None:
+            kwargs.update(torch_dtype=getattr(torch, torch_dtype))
+        self.controlnet = ControlNetModel.from_pretrained(
+            from_pretrained, **kwargs)
+        self.freeze = freeze
+        if self.freeze:
+            self.requires_grad_(False)
+        self.controlnet.set_use_memory_efficient_attention_xformers(
+            not hasattr(torch.nn.functional, 'scaled_dot_product_attention'))
+        if checkpointing:
+            self.controlnet.enable_gradient_checkpointing()
+
+    def forward(self, *args, **kwargs):
+        return self.controlnet.forward(*args, **kwargs)
+
+
+@MODULES.register_module()
+class PretrainedVAE(nn.Module):
     def __init__(self,
                  from_pretrained=None,
                  del_encoder=False,
                  del_decoder=False,
                  use_slicing=False,
                  freeze=True,
-                 torch_dtype='float32', **kwargs):
+                 torch_dtype='float32',
+                 **kwargs):
         super().__init__()
+        if torch_dtype is not None:
+            kwargs.update(torch_dtype=getattr(torch, torch_dtype))
         self.vae = AutoencoderKL.from_pretrained(
             from_pretrained, **kwargs)
         if del_encoder:
@@ -418,10 +599,8 @@ class LDMAutoEncoder(nn.Module):
         self.freeze = freeze
         if self.freeze:
             self.requires_grad_(False)
-        self.to(getattr(torch, torch_dtype))
-        if is_xformers_available():
-            self.vae.set_use_memory_efficient_attention_xformers(
-                not hasattr(torch.nn.functional, 'scaled_dot_product_attention'))
+        self.vae.set_use_memory_efficient_attention_xformers(
+            not hasattr(torch.nn.functional, 'scaled_dot_product_attention'))
 
     def forward(self, *args, **kwargs):
         return self.vae.forward(*args, **kwargs)[0]
@@ -441,85 +620,54 @@ class LDMAutoEncoder(nn.Module):
 
 
 @MODULES.register_module()
-class LDMDecoder(LDMAutoEncoder):
-    def __init__(self,
-                 from_pretrained=None,
-                 use_slicing=False,
-                 freeze=True,
-                 torch_dtype='float32'):
+class PretrainedVAEDecoder(PretrainedVAE):
+    def __init__(self, **kwargs):
         super().__init__(
-            from_pretrained=from_pretrained,
             del_encoder=True,
             del_decoder=False,
-            use_slicing=use_slicing,
-            freeze=freeze,
-            torch_dtype=torch_dtype)
+            **kwargs)
 
     def forward(self, code):
         return super().decode(code)
 
 
 @MODULES.register_module()
-class LDMEncoder(LDMAutoEncoder):
-    def __init__(self,
-                 from_pretrained=None,
-                 use_slicing=False,
-                 freeze=True,
-                 torch_dtype='float32'):
+class PretrainedVAEEncoder(PretrainedVAE):
+    def __init__(self, **kwargs):
         super().__init__(
-            from_pretrained=from_pretrained,
             del_encoder=False,
             del_decoder=True,
-            use_slicing=use_slicing,
-            freeze=freeze,
-            torch_dtype=torch_dtype)
+            **kwargs)
 
     def forward(self, img):
         return super().encode(img)
 
 
-@MODULES.register_module()
-class ReferenceOnlyAttnProc(torch.nn.Module):
+class ReferenceAttnProc(torch.nn.Module):
     def __init__(
-        self, hidden_size, cross_attention_dim=None, rank=4
+            self,
+            chained_proc,
+            enabled=False,
+            name=None
     ) -> None:
         super().__init__()
-        self.enabled = cross_attention_dim is None
-        if torch.__version__ >= '2.0':
-            chain_cls = LoRAAttnProcessor2_0
-        elif is_xformers_available():
-            chain_cls = LoRAXFormersAttnProcessor
-        else:
-            chain_cls = LoRAAttnProcessor
-        self.chained_proc = chain_cls(hidden_size, cross_attention_dim, rank)
+        self.enabled = enabled
+        self.chained_proc = chained_proc
+        self.name = name
 
     def __call__(
-        self, attn: Attention, hidden_states, encoder_hidden_states=None, attention_mask=None, mode="w"
-    ):
+            self, attn: Attention, hidden_states, encoder_hidden_states=None, attention_mask=None,
+            mode='w', ref_dict: dict = None):
         if encoder_hidden_states is None:
             encoder_hidden_states = hidden_states
         if self.enabled:
             if mode == 'w':
-                self.states = encoder_hidden_states
+                ref_dict[self.name] = encoder_hidden_states
             elif mode == 'r':
-                encoder_hidden_states = torch.cat([encoder_hidden_states, self.states], dim=1)
-                self.states = None
+                encoder_hidden_states = torch.cat([encoder_hidden_states, ref_dict.pop(self.name)], dim=1)
             elif mode == 'm':
-                encoder_hidden_states = torch.cat([encoder_hidden_states, self.states], dim=1)
+                encoder_hidden_states = torch.cat([encoder_hidden_states, ref_dict[self.name]], dim=1)
             else:
                 assert False, mode
         res = self.chained_proc(attn, hidden_states, encoder_hidden_states, attention_mask)
         return res
-    
-
-@MODULES.register_module()
-class ReferenceOnlyAttnProcWithPose(ReferenceOnlyAttnProc):
-    def __init__(self, hidden_size, cross_attention_dim=None, rank=4) -> None:
-        super().__init__(hidden_size, cross_attention_dim, rank)
-        self.pose_net = nn.Linear(12, hidden_size)
-        nn.init.zeros_(self.pose_net.weight)
-        nn.init.zeros_(self.pose_net.bias)
-    
-    def __call__(self, attn: Attention, hidden_states, encoder_hidden_states=None, attention_mask=None, mode="w", pose=...):
-        hidden_states = hidden_states + self.pose_net(pose).unsqueeze(1)
-        return super().__call__(attn, hidden_states, encoder_hidden_states, attention_mask, mode)
