@@ -1,4 +1,4 @@
-# 3D-Adapters (previously MVEdit)
+# 3D-Adapter
 
 Official PyTorch implementation of the papers:
 
@@ -31,6 +31,10 @@ Official PyTorch implementation of the papers:
 <sup>1</sup>Stanford University, <sup>2</sup>UCSD, <sup>3</sup>Apparate Labs
 <br>
 [[project page](https://lakonik.github.io/mvedit)] [[🤗Demo](https://huggingface.co/spaces/Lakonik/MVEdit)] [[paper](https://arxiv.org/abs/2403.12032)]
+
+
+https://github.com/user-attachments/assets/6cba3a92-04fe-46ee-88ca-e6dfe5443c36
+
 
 ## Todos
 
