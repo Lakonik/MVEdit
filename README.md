@@ -73,7 +73,7 @@ git clone https://github.com/Lakonik/MVEdit && cd MVEdit
 pip install -r requirements.txt
 ```
 
-This codebase also works on Windows systems if the environment is configured correctly. Please refer to [Issue #8](https://github.com/Lakonik/MVEdit/issues/8) for more information about the environment setup on Windows.
+This codebase also works on Windows systems if the environment is configured correctly. Certain packages (e.g., tiny-cuda-nn) may require adjustments for installation on Windows.
 
 ## Inference
 
