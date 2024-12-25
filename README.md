@@ -59,7 +59,7 @@ export PATH=/usr/local/cuda-12.1/bin:$PATH
 export LD_LIBRARY_PATH=/usr/local/cuda-12.1/lib64:$LD_LIBRARY_PATH
 
 # Create conda environment
-conda create -y -n mvedit python=3.10
+conda create -y -n mvedit python=3.10 numpy=1.26 ninja
 conda activate mvedit
 
 # Install FFmpeg (optional)
